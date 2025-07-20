@@ -45,27 +45,19 @@ def load_config() -> Config:
 
 
 @st.cache_data
-def extract_urls_from_file(uploaded_file) -> list:
-    """Extract URLs from uploaded CSV/Excel file."""
+def load_dataframe(uploaded_file) -> pd.DataFrame:
+    """Load dataframe from uploaded file."""
     try:
         if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
+            return pd.read_csv(uploaded_file)
         elif uploaded_file.name.endswith(('.xlsx', '.xls')):
-            df = pd.read_excel(uploaded_file)
+            return pd.read_excel(uploaded_file)
         else:
             st.error("Unsupported file format. Please upload CSV or Excel files.")
-            return []
-        
-        columns = df.columns.tolist()
-        url_column = st.selectbox("Select the column containing URLs:", columns)
-        
-        if url_column:
-            urls = df[url_column].dropna().astype(str).tolist()
-            return [url.strip() for url in urls if url.strip()]
-            
+            return None
     except Exception as e:
         st.error(f"Error reading file: {str(e)}")
-    return []
+        return None
 
 
 class ProgressTracker:
@@ -293,9 +285,15 @@ def main():
         )
         
         if uploaded_file is not None:
-            urls = extract_urls_from_file(uploaded_file)
-            if urls:
-                st.sidebar.success(f"✅ Found {len(urls)} URLs")
+            df = load_dataframe(uploaded_file)
+            if df is not None:
+                columns = df.columns.tolist()
+                url_column = st.selectbox("Select the column containing URLs:", columns)
+                
+                if url_column:
+                    urls = df[url_column].dropna().astype(str).tolist()
+                    urls = [url.strip() for url in urls if url.strip()]
+                    st.sidebar.success(f"✅ Found {len(urls)} URLs")
                 
     elif input_method == "Sitemap URL":
         sitemap_url = st.sidebar.text_input(
