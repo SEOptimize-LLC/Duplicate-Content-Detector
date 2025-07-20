@@ -16,7 +16,7 @@ chardet==5.2.0
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.25.1
 transformers==4.42.3
-torch==2.3.1+cpu
+torch==2.3.1
 aiohttp==3.9.5
 asyncio-throttle==1.0.2
 validators==0.28.1
