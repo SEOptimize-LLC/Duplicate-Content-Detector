@@ -3,11 +3,9 @@
 import asyncio
 import aiohttp
 import logging
-from typing import List, Dict, Optional, Tuple
-from urllib.parse import urljoin, urlparse
+from typing import List, Optional
+from urllib.parse import urljoin
 from bs4 import BeautifulSoup
-import newspaper
-from newspaper import Article
 import chardet
 import time
 from dataclasses import dataclass
@@ -44,6 +42,7 @@ class ScrapedContent:
             self.content_hash = hashlib.md5(
                 self.content.encode('utf-8')
             ).hexdigest()
+
 
 class WebScraper:
     """Advanced web scraper with caching and intelligent extraction."""
@@ -135,50 +134,8 @@ class WebScraper:
                 
         return None
         
-    def _extract_with_newspaper(self, url: str, html: str) -> Optional[ScrapedContent]:
-        """Extract content using newspaper3k for better accuracy."""
-        try:
-            article = Article(url)
-            article.set_html(html)
-            article.parse()
-            
-            if not article.text or len(article.text) < self.config.MIN_CONTENT_LENGTH:
-                return None
-                
-            soup = BeautifulSoup(html, 'html.parser')
-            
-            # Extract headings
-            headings = []
-            for tag in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                headings.extend([h.get_text(strip=True) for h in soup.find_all(tag)])
-                
-            # Extract images
-            images = [img.get('src') for img in soup.find_all('img') if img.get('src')]
-            
-            # Extract links
-            links = [a.get('href') for a in soup.find_all('a') if a.get('href')]
-            links = [urljoin(url, link) for link in links]
-            
-            return ScrapedContent(
-                url=url,
-                title=article.title or "",
-                content=article.text,
-                meta_description=article.meta_description or "",
-                headings=headings,
-                word_count=len(article.text.split()),
-                language=article.meta_lang or "en",
-                publish_date=article.publish_date.isoformat() if article.publish_date else None,
-                author=", ".join(article.authors) if article.authors else None,
-                images=images,
-                links=links
-            )
-            
-        except Exception as e:
-            self.logger.error(f"Newspaper extraction error for {url}: {e}")
-            return None
-            
     def _extract_with_bs4(self, url: str, html: str) -> Optional[ScrapedContent]:
-        """Fallback extraction using BeautifulSoup."""
+        """Extract content using BeautifulSoup (fallback method)."""
         try:
             soup = BeautifulSoup(html, 'html.parser')
             
@@ -197,19 +154,24 @@ class WebScraper:
             # Extract main content
             content_selectors = [
                 'main', 'article', '[role="main"]', '.content', '.main-content',
-                '.post-content', '.entry-content', '#content', '#main-content'
+                '.post-content', '.entry-content', '#content', '#main-content',
+                'div[class*="content"]', 'div[class*="article"]'
             ]
             
             content = ""
             for selector in content_selectors:
-                element = soup.select_one(selector)
-                if element:
-                    content = element.get_text(separator=' ', strip=True)
-                    break
-                    
+                elements = soup.select(selector)
+                if elements:
+                    content = elements[0].get_text(separator=' ', strip=True)
+                    if len(content) > self.config.MIN_CONTENT_LENGTH:
+                        break
+                        
             if not content:
-                content = soup.get_text(separator=' ', strip=True)
-                
+                # Fallback to body content
+                body = soup.find('body')
+                if body:
+                    content = body.get_text(separator=' ', strip=True)
+                    
             if len(content) < self.config.MIN_CONTENT_LENGTH:
                 return None
                 
@@ -250,11 +212,8 @@ class WebScraper:
         if not html:
             return None
             
-        # Try newspaper extraction first
-        content = self._extract_with_newspaper(url, html)
-        if not content:
-            # Fallback to BS4
-            content = self._extract_with_bs4(url, html)
+        # Use BS4 extraction (removed newspaper3k dependency)
+        content = self._extract_with_bs4(url, html)
             
         if content:
             self._save_to_cache(content)
