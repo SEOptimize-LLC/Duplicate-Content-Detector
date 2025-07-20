@@ -26,3 +26,6 @@ textstat==0.7.3
 rouge-score==0.1.2
 bert-score==0.3.13
 scipy==1.13.1
+openpyxl==3.1.2
+xlrd==2.0.1
+newspaper3k==0.2.8
