@@ -1,0 +1,23 @@
+# Sample URLs for testing the duplicate content detector
+# Add your URLs here, one per line
+# Lines starting with # are ignored
+
+# Example blog posts
+https://blog.hubspot.com/marketing/what-is-digital-marketing
+https://blog.hubspot.com/marketing/digital-marketing
+https://blog.hubspot.com/marketing/online-marketing
+
+# Product pages
+https://www.semrush.com/blog/what-is-seo/
+https://www.semrush.com/blog/seo-meaning/
+https://www.semrush.com/blog/search-engine-optimization/
+
+# News articles
+https://www.bbc.com/news/technology
+https://www.bbc.com/news/technology-science
+https://www.bbc.com/news/business-technology
+
+# Wikipedia pages
+https://en.wikipedia.org/wiki/Artificial_intelligence
+https://en.wikipedia.org/wiki/AI
+https://en.wikipedia.org/wiki/Machine_learning

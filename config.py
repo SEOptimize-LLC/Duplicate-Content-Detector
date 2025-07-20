@@ -1,0 +1,61 @@
+"""Configuration settings for duplicate content detection system."""
+
+import os
+from typing import Dict, Any
+
+class Config:
+    """Central configuration class for the duplicate content detector."""
+    
+    # Web scraping settings
+    MAX_WORKERS = int(os.getenv('MAX_WORKERS', '10'))
+    REQUEST_TIMEOUT = int(os.getenv('REQUEST_TIMEOUT', '30'))
+    MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
+    RATE_LIMIT_DELAY = float(os.getenv('RATE_LIMIT_DELAY', '1.0'))
+    USER_AGENT = os.getenv('USER_AGENT', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+    
+    # Content processing settings
+    MIN_CONTENT_LENGTH = int(os.getenv('MIN_CONTENT_LENGTH', '100'))
+    MAX_CONTENT_LENGTH = int(os.getenv('MAX_CONTENT_LENGTH', '50000'))
+    CHUNK_SIZE = int(os.getenv('CHUNK_SIZE', '512'))
+    OVERLAP_SIZE = int(os.getenv('OVERLAP_SIZE', '50'))
+    
+    # Similarity thresholds
+    COSINE_THRESHOLD = float(os.getenv('COSINE_THRESHOLD', '0.85'))
+    JACCARD_THRESHOLD = float(os.getenv('JACCARD_THRESHOLD', '0.7'))
+    LEVENSHTEIN_THRESHOLD = float(os.getenv('LEVENSHTEIN_THRESHOLD', '0.8'))
+    SEMANTIC_THRESHOLD = float(os.getenv('SEMANTIC_THRESHOLD', '0.75'))
+    
+    # AI/ML settings
+    EMBEDDING_MODEL = os.getenv('EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
+    SEMANTIC_MODEL = os.getenv('SEMANTIC_MODEL', 'paraphrase-MiniLM-L6-v2')
+    LANGUAGE_DETECTION = bool(os.getenv('LANGUAGE_DETECTION', 'True'))
+    
+    # Cache settings
+    CACHE_ENABLED = bool(os.getenv('CACHE_ENABLED', 'True'))
+    CACHE_TTL = int(os.getenv('CACHE_TTL', '3600'))
+    CACHE_DIR = os.getenv('CACHE_DIR', './cache')
+    
+    # Output settings
+    OUTPUT_FORMAT = os.getenv('OUTPUT_FORMAT', 'json')
+    INCLUDE_METADATA = bool(os.getenv('INCLUDE_METADATA', 'True'))
+    GENERATE_REPORT = bool(os.getenv('GENERATE_REPORT', 'True'))
+    
+    # Streamlit settings
+    STREAMLIT_THEME = os.getenv('STREAMLIT_THEME', 'dark')
+    MAX_DISPLAY_DOCS = int(os.getenv('MAX_DISPLAY_DOCS', '50'))
+    ENABLE_DOWNLOADS = bool(os.getenv('ENABLE_DOWNLOADS', 'True'))
+    
+    @classmethod
+    def to_dict(cls) -> Dict[str, Any]:
+        """Convert configuration to dictionary."""
+        return {
+            key: value for key, value in cls.__dict__.items()
+            if not key.startswith('_') and not callable(value)
+        }
+    
+    @classmethod
+    def update_from_dict(cls, config_dict: Dict[str, Any]) -> None:
+        """Update configuration from dictionary."""
+        for key, value in config_dict.items():
+            if hasattr(cls, key):
+                setattr(cls, key, value)
