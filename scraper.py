@@ -3,11 +3,9 @@
 import asyncio
 import aiohttp
 import logging
-from typing import List, Dict, Optional
+from typing import List, Optional
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
-import newspaper
-from newspaper import Article
 import chardet
 import time
 from dataclasses import dataclass
@@ -15,6 +13,15 @@ from pathlib import Path
 import hashlib
 import json
 from config import Config
+
+# Try to import newspaper3k, but provide fallback
+try:
+    import newspaper
+    from newspaper import Article
+    NEWSPAPER_AVAILABLE = True
+except ImportError:
+    NEWSPAPER_AVAILABLE = False
+    logging.warning("newspaper3k not available, using BeautifulSoup fallback")
 
 @dataclass
 class ScrapedContent:
@@ -196,6 +203,9 @@ class WebScraper:
         
     def _extract_with_newspaper(self, url: str, html: str) -> Optional[ScrapedContent]:
         """Extract content using newspaper3k for better accuracy."""
+        if not NEWSPAPER_AVAILABLE:
+            return None
+            
         try:
             article = Article(url)
             article.set_html(html)
@@ -323,10 +333,13 @@ class WebScraper:
         if not html:
             return None
             
-        # Try newspaper extraction first
-        content = self._extract_with_newspaper(url, html)
+        # Try newspaper extraction first (if available)
+        content = None
+        if NEWSPAPER_AVAILABLE:
+            content = self._extract_with_newspaper(url, html)
+        
+        # Fallback to BS4 if newspaper failed or not available
         if not content:
-            # Fallback to BS4
             content = self._extract_with_bs4(url, html)
             
         if content:
