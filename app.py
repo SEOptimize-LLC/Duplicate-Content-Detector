@@ -1,19 +1,15 @@
-"""Streamlit application for duplicate content detection."""
+"""Streamlit app for AI-powered duplicate content detection."""
 
 import streamlit as st
-import pandas as pd
 import asyncio
-import logging
-from typing import List, Dict, Any
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import pandas as pd
 import json
+import logging
 from datetime import datetime
-import io
+import plotly.express as px
+from scraper import WebScraper
+from detector import DuplicateDetector
 from config import Config
-from scraper import WebScraper, ScrapedContent
-from detector import DuplicateDetector, DuplicateResult
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,365 +25,324 @@ st.set_page_config(
 
 # Custom CSS
 st.markdown("""
-<style>
-    .main {
-        padding: 0rem 1rem;
-    }
-    .stButton>button {
-        width: 100%;
-        background-color: #1f77b4;
-        color: white;
-        font-weight: bold;
-    }
+    <style>
+    .main { padding: 0rem 1rem; }
+    .stProgress .st-bo { background-color: #1f77b4; }
     .metric-card {
         background-color: #f0f2f6;
         padding: 1rem;
         border-radius: 0.5rem;
         margin: 0.5rem 0;
     }
-    .duplicate-card {
-        background-color: #ffebee;
-        border-left: 4px solid #f44336;
-        padding: 1rem;
-        margin: 0.5rem 0;
-        border-radius: 0.25rem;
-    }
-    .safe-card {
-        background-color: #e8f5e8;
-        border-left: 4px solid #4caf50;
-        padding: 1rem;
-        margin: 0.5rem 0;
-        border-radius: 0.25rem;
-    }
-</style>
+    </style>
 """, unsafe_allow_html=True)
 
-class StreamlitApp:
-    """Main Streamlit application class."""
+
+@st.cache_data
+def load_config() -> Config:
+    """Load configuration."""
+    return Config()
+
+
+@st.cache_data
+def extract_urls_from_file(uploaded_file) -> list:
+    """Extract URLs from uploaded CSV/Excel file."""
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        elif uploaded_file.name.endswith(('.xlsx', '.xls')):
+            df = pd.read_excel(uploaded_file)
+        else:
+            st.error("Unsupported file format. Please upload CSV or Excel files.")
+            return []
+        
+        columns = df.columns.tolist()
+        url_column = st.selectbox("Select the column containing URLs:", columns)
+        
+        if url_column:
+            urls = df[url_column].dropna().astype(str).tolist()
+            return [url.strip() for url in urls if url.strip()]
+            
+    except Exception as e:
+        st.error(f"Error reading file: {str(e)}")
+    return []
+
+
+class ProgressTracker:
+    """Track progress for scraping and analysis."""
     
-    def __init__(self):
-        self.config = Config()
-        self.detector = DuplicateDetector(self.config)
+    def __init__(self, total_steps: int):
+        self.total_steps = total_steps
+        self.current_step = 0
+        self.progress_bar = st.progress(0)
+        self.status_text = st.empty()
         
-    def run(self):
-        """Run the Streamlit application."""
-        st.title("🔍 AI-Powered Duplicate Content Detector")
-        st.markdown("### Advanced NLP-based duplicate detection for websites")
+    def update(self, message: str, step_increment: int = 1):
+        """Update progress."""
+        self.current_step += step_increment
+        progress = min(self.current_step / self.total_steps, 1.0)
+        self.progress_bar.progress(progress)
+        self.status_text.text(message)
         
-        # Sidebar
-        with st.sidebar:
-            st.header("⚙️ Configuration")
-            
-            # URL input
-            url_input = st.text_area(
-                "Enter URLs (one per line)",
-                placeholder="https://example.com/page1\nhttps://example.com/page2",
-                height=100
-            )
-            
-            # Sitemap input
-            sitemap_url = st.text_input(
-                "Or enter sitemap URL",
-                placeholder="https://example.com/sitemap.xml"
-            )
-            
-            # Advanced settings
-            with st.expander("Advanced Settings"):
-                self.config.COSINE_THRESHOLD = st.slider(
-                    "Cosine Similarity Threshold",
-                    0.0, 1.0, self.config.COSINE_THRESHOLD
-                )
-                self.config.SEMANTIC_THRESHOLD = st.slider(
-                    "Semantic Similarity Threshold",
-                    0.0, 1.0, self.config.SEMANTIC_THRESHOLD
-                )
-                self.config.MIN_CONTENT_LENGTH = st.number_input(
-                    "Minimum Content Length",
-                    min_value=50, max_value=1000, value=self.config.MIN_CONTENT_LENGTH
-                )
-                self.config.MAX_WORKERS = st.number_input(
-                    "Max Concurrent Workers",
-                    min_value=1, max_value=20, value=self.config.MAX_WORKERS
-                )
+    def complete(self):
+        """Mark as complete."""
+        self.progress_bar.progress(1.0)
+        self.status_text.text("✅ Complete!")
+
+
+async def analyze_urls_with_progress(urls: list, config: Config) -> dict:
+    """Analyze URLs with detailed progress tracking."""
+    total_steps = len(urls) + 3
+    
+    progress = ProgressTracker(total_steps)
+    
+    try:
+        progress.update("🚀 Initializing scraper...")
+        
+        progress.update("📄 Scraping content from URLs...")
+        async with WebScraper(config) as scraper:
+            contents = await scraper.scrape_urls(urls)
+        
+        if not contents:
+            return {"error": "No content could be scraped from the provided URLs"}
+        
+        for content in contents:
+            progress.update(f"✅ Scraped: {content.url} ({content.word_count} words)", 0)
+        
+        progress.update("🔍 Analyzing content for duplicates...")
+        detector = DuplicateDetector(config)
+        results = detector.detect_duplicates(contents)
+        
+        progress.update("📊 Generating summary report...")
+        duplicates = [r for r in results if r.is_duplicate]
+        
+        summary = {
+            "total_urls": len(urls),
+            "content_scraped": len(contents),
+            "duplicates_found": len(duplicates),
+            "similarity_threshold": config.SEMANTIC_THRESHOLD,
+            "analysis_date": datetime.now().isoformat()
+        }
+        
+        progress.complete()
+        
+        return {
+            "contents": contents,
+            "results": results,
+            "summary": summary
+        }
+        
+    except Exception as e:
+        progress.status_text.error(f"❌ Error: {str(e)}")
+        return {"error": str(e)}
+
+
+def display_results(results: dict):
+    """Display analysis results."""
+    if "error" in results:
+        st.error(f"Analysis failed: {results['error']}")
+        return
+    
+    st.header("📊 Analysis Summary")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total URLs", results["summary"]["total_urls"])
+    with col2:
+        st.metric("Content Scraped", results["summary"]["content_scraped"])
+    with col3:
+        st.metric("Duplicates Found", results["summary"]["duplicates_found"])
+    with col4:
+        st.metric("Threshold", f"{results['summary']['similarity_threshold']:.0%}")
+    
+    duplicates = [r for r in results["results"] if r.is_duplicate]
+    
+    if duplicates:
+        st.header("🔍 Duplicate Results")
+        duplicates = sorted(duplicates, key=lambda x: x.similarity_score, reverse=True)
+        
+        for i, result in enumerate(duplicates):
+            with st.expander(f"Duplicate Pair {i+1} ({result.similarity_score:.1%} similarity)"):
+                col1, col2 = st.columns(2)
                 
-            # Action buttons
-            col1, col2 = st.columns(2)
-            with col1:
-                analyze_button = st.button("🔍 Analyze", type="primary")
-            with col2:
-                clear_button = st.button("🗑️ Clear Results")
+                with col1:
+                    st.markdown(f"**URL 1:** {result.url1}")
+                    st.markdown(f"**URL 2:** {result.url2}")
+                    st.markdown(f"**Confidence:** {result.confidence:.1%}")
                 
-        # Main content area
-        if analyze_button:
-            self.analyze_content(url_input, sitemap_url)
-        elif clear_button:
-            st.session_state.clear()
-            st.rerun()
-            
-        # Display results if available
-        if 'results' in st.session_state:
-            self.display_results()
-            
-    def analyze_content(self, url_input: str, sitemap_url: str):
-        """Analyze content for duplicates."""
-        with st.spinner("🔄 Scraping and analyzing content..."):
-            try:
-                # Collect URLs
-                urls = self.collect_urls(url_input, sitemap_url)
-                
-                if not urls:
-                    st.error("❌ No valid URLs provided")
-                    return
-                    
-                st.info(f"📊 Analyzing {len(urls)} URLs...")
-                
-                # Scrape content
-                contents = asyncio.run(self.scrape_all_urls(urls))
-                
-                if not contents:
-                    st.error("❌ No content could be scraped")
-                    return
-                    
-                # Detect duplicates
-                results = self.detector.detect_duplicates(contents)
-                
-                # Store results
-                st.session_state['results'] = results
-                st.session_state['contents'] = contents
-                st.session_state['urls'] = urls
-                
-                st.success(f"✅ Analysis complete! Found {len(results)} potential duplicates")
-                
-            except Exception as e:
-                st.error(f"❌ Error during analysis: {str(e)}")
-                logger.exception("Analysis error")
-                
-    def collect_urls(self, url_input: str, sitemap_url: str) -> List[str]:
-        """Collect URLs from input and sitemap."""
-        urls = []
+                with col2:
+                    st.markdown("**Common Content:**")
+                    st.text_area("", result.common_content, height=100, key=f"common_{i}")
         
-        # Parse manual URLs
-        if url_input:
-            manual_urls = [url.strip() for url in url_input.split('\n') if url.strip()]
-            urls.extend(manual_urls)
-            
-        # Parse sitemap
-        if sitemap_url:
-            try:
-                scraper = WebScraper(self.config)
-                sitemap_urls = scraper.extract_sitemap_urls(sitemap_url)
-                urls.extend(sitemap_urls)
-                st.info(f"📋 Added {len(sitemap_urls)} URLs from sitemap")
-            except Exception as e:
-                st.warning(f"⚠️ Could not parse sitemap: {e}")
-                
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_urls = [url for url in urls if not (url in seen or seen.add(url))]
+        st.header("📥 Export Results")
+        csv_data = []
+        for result in duplicates:
+            csv_data.append({
+                "URL 1": result.url1,
+                "URL 2": result.url2,
+                "Similarity Score": f"{result.similarity_score:.2%}",
+                "Confidence": f"{result.confidence:.2%}",
+                "Common Content": result.common_content
+            })
         
-        return unique_urls
-        
-    async def scrape_all_urls(self, urls: List[str]) -> List[ScrapedContent]:
-        """Scrape all URLs concurrently."""
-        async with WebScraper(self.config) as scraper:
-            return await scraper.scrape_urls(urls)
-            
-    def display_results(self):
-        """Display analysis results."""
-        results = st.session_state['results']
-        contents = st.session_state['contents']
-        
-        if not results:
-            st.info("✅ No duplicates found!")
-            return
-            
-        # Summary metrics
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Total URLs", len(st.session_state['urls']))
-        with col2:
-            st.metric("Content Scraped", len(contents))
-        with col3:
-            duplicates = sum(1 for r in results if r.is_duplicate)
-            st.metric("Duplicates Found", duplicates)
-        with col4:
-            avg_similarity = np.mean([r.similarity_score for r in results]) if results else 0
-            st.metric("Avg Similarity", f"{avg_similarity:.2%}")
-            
-        # Visualizations
-        self.create_visualizations(results)
-        
-        # Detailed results
-        st.header("📋 Detailed Results")
-        
-        # Filter duplicates
-        show_duplicates = st.checkbox("Show only confirmed duplicates", value=True)
-        
-        filtered_results = [r for r in results if not show_duplicates or r.is_duplicate]
-        
-        for idx, result in enumerate(filtered_results):
-            self.display_result_card(result, idx)
-            
-    def create_visualizations(self, results: List[DuplicateResult]):
-        """Create interactive visualizations."""
-        st.header("📊 Analysis Visualizations")
+        df = pd.DataFrame(csv_data)
         
         col1, col2 = st.columns(2)
-        
         with col1:
-            # Similarity distribution
-            similarities = [r.similarity_score for r in results]
-            fig = px.histogram(
-                x=similarities,
-                nbins=20,
-                title="Similarity Score Distribution",
-                labels={'x': 'Similarity Score', 'y': 'Count'}
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="📄 Download CSV",
+                data=csv,
+                file_name=f"duplicate_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
             )
-            fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
-            
+        
         with col2:
-            # Duplicate status pie chart
-            duplicate_counts = {
-                'Duplicates': sum(1 for r in results if r.is_duplicate),
-                'Non-duplicates': sum(1 for r in results if not r.is_duplicate)
-            }
-            fig = px.pie(
-                values=list(duplicate_counts.values()),
-                names=list(duplicate_counts.keys()),
-                title="Duplicate Status Distribution"
+            json_data = json.dumps({
+                "summary": results["summary"],
+                "duplicates": csv_data
+            }, indent=2)
+            st.download_button(
+                label="📋 Download JSON",
+                data=json_data,
+                file_name=f"duplicate_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json"
             )
-            fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
+    
+    else:
+        st.success("✅ No duplicates found above the threshold!")
+
+
+def create_visualizations(results: dict):
+    """Create interactive visualizations."""
+    if "error" in results or not results["results"]:
+        return
+    
+    st.header("📈 Visualizations")
+    
+    similarities = [r.similarity_score for r in results["results"]]
+    
+    fig_hist = px.histogram(
+        x=similarities,
+        nbins=20,
+        title="Similarity Score Distribution",
+        labels={"x": "Similarity Score", "y": "Count"},
+        color_discrete_sequence=["#1f77b4"]
+    )
+    fig_hist.update_layout(height=400)
+    st.plotly_chart(fig_hist, use_container_width=True)
+    
+    duplicates = [r for r in results["results"] if r.is_duplicate]
+    if len(duplicates) > 1:
+        urls = list(set([d.url1 for d in duplicates] + [d.url2 for d in duplicates]))
+        if len(urls) <= 10:
+            similarity_matrix = []
+            for url1 in urls:
+                row = []
+                for url2 in urls:
+                    if url1 == url2:
+                        row.append(1.0)
+                    else:
+                        score = 0.0
+                        for d in duplicates:
+                            if (d.url1 == url1 and d.url2 == url2) or (d.url1 == url2 and d.url2 == url1):
+                                score = d.similarity_score
+                                break
+                        row.append(score)
+                similarity_matrix.append(row)
             
-        # Similarity heatmap
-        if len(results) <= 50:  # Limit for performance
-            self.create_similarity_heatmap(results)
-            
-    def create_similarity_heatmap(self, results: List[DuplicateResult]):
-        """Create similarity heatmap."""
-        st.subheader("🔥 Similarity Heatmap")
-        
-        # Get unique URLs
-        urls = list(set([r.url1 for r in results] + [r.url2 for r in results]))
-        url_to_idx = {url: idx for idx, url in enumerate(urls)}
-        
-        # Create matrix
-        matrix = np.zeros((len(urls), len(urls)))
-        for result in results:
-            i = url_to_idx[result.url1]
-            j = url_to_idx[result.url2]
-            matrix[i, j] = result.similarity_score
-            matrix[j, i] = result.similarity_score
-            
-        # Create heatmap
-        fig = px.imshow(
-            matrix,
-            labels=dict(x="URL", y="URL", color="Similarity"),
-            x=urls,
-            y=urls,
-            color_continuous_scale="RdYlBu_r"
+            fig_heatmap = px.imshow(
+                similarity_matrix,
+                x=urls,
+                y=urls,
+                title="Similarity Heatmap",
+                color_continuous_scale="Blues",
+                aspect="auto"
+            )
+            fig_heatmap.update_layout(height=500)
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+
+
+def main():
+    """Main application."""
+    st.title("🔍 AI-Powered Duplicate Content Detector")
+    st.markdown("Detect duplicate content across websites using advanced AI/NLP techniques")
+    
+    st.sidebar.header("📋 Input Options")
+    
+    input_method = st.sidebar.radio(
+        "Choose input method:",
+        ["Paste URLs", "Upload File", "Sitemap URL"]
+    )
+    
+    urls = []
+    
+    if input_method == "Paste URLs":
+        url_input = st.sidebar.text_area(
+            "Enter URLs (one per line):",
+            height=200,
+            placeholder="https://example.com/page1\nhttps://example.com/page2"
         )
-        fig.update_layout(height=600)
-        st.plotly_chart(fig, use_container_width=True)
+        urls = [url.strip() for url in url_input.split('\n') if url.strip()]
         
-    def display_result_card(self, result: DuplicateResult, index: int):
-        """Display individual result card."""
-        card_class = "duplicate-card" if result.is_duplicate else "safe-card"
-        
-        with st.expander(
-            f"{'🔴' if result.is_duplicate else '🟢'} "
-            f"Pair {index + 1}: {result.similarity_score:.2%} similarity",
-            expanded=result.is_duplicate
-        ):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**URL 1:**")
-                st.code(result.url1, language=None)
-                st.markdown("**URL 2:**")
-                st.code(result.url2, language=None)
-                
-            with col2:
-                st.metric("Similarity Score", f"{result.similarity_score:.2%}")
-                st.metric("Confidence", f"{result.confidence:.2%}")
-                
-            # Detailed scores
-            with st.expander("📊 Detailed Similarity Scores"):
-                scores = result.metadata.get('individual_scores', {})
-                if scores:
-                    df = pd.DataFrame(
-                        list(scores.items()),
-                        columns=['Method', 'Score']
-                    )
-                    st.dataframe(df, use_container_width=True)
-                    
-            # Common content
-            if result.common_content:
-                with st.expander("📝 Common Content"):
-                    st.text_area("Common text", result.common_content[:500] + "...", height=100)
-                    
-            # Differences
-            try:
-                differences = json.loads(result.differences)
-                if differences.get('added') or differences.get('removed'):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown("**Added content:**")
-                        st.text_area("", differences.get('added', '')[:200] + "...", height=80)
-                    with col2:
-                        st.markdown("**Removed content:**")
-                        st.text_area("", differences.get('removed', '')[:200] + "...", height=80)
-            except:
-                pass
-                
-    def export_results(self):
-        """Export results functionality."""
-        if 'results' not in st.session_state:
-            return
-            
-        results = st.session_state['results']
-        
-        # Prepare data for export
-        export_data = []
-        for result in results:
-            export_data.append({
-                'URL1': result.url1,
-                'URL2': result.url2,
-                'Similarity Score': result.similarity_score,
-                'Confidence': result.confidence,
-                'Is Duplicate': result.is_duplicate,
-                'Common Content': result.common_content,
-                'Differences': result.differences,
-                **result.metadata.get('individual_scores', {})
-            })
-            
-        df = pd.DataFrame(export_data)
-        
-        # CSV export
-        csv = df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download CSV",
-            data=csv,
-            file_name=f"duplicate_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
+    elif input_method == "Upload File":
+        uploaded_file = st.sidebar.file_uploader(
+            "Upload CSV or Excel file",
+            type=['csv', 'xlsx', 'xls'],
+            help="Upload a file containing URLs. The app will detect URL columns automatically."
         )
         
-        # JSON export
-        json_data = json.dumps([r.__dict__ for r in results], indent=2, default=str)
-        st.download_button(
-            label="📥 Download JSON",
-            data=json_data,
-            file_name=f"duplicate_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-            mime="application/json"
+        if uploaded_file is not None:
+            urls = extract_urls_from_file(uploaded_file)
+            if urls:
+                st.sidebar.success(f"✅ Found {len(urls)} URLs")
+                
+    elif input_method == "Sitemap URL":
+        sitemap_url = st.sidebar.text_input(
+            "Enter sitemap URL:",
+            placeholder="https://example.com/sitemap.xml"
         )
+        if sitemap_url:
+            config = load_config()
+            scraper = WebScraper(config)
+            urls = scraper.extract_sitemap_urls(sitemap_url)
+            if urls:
+                st.sidebar.success(f"✅ Found {len(urls)} URLs from sitemap")
+    
+    st.sidebar.header("⚙️ Configuration")
+    config = load_config()
+    
+    config.SEMANTIC_THRESHOLD = st.sidebar.slider(
+        "Similarity Threshold",
+        min_value=0.5,
+        max_value=1.0,
+        value=0.75,
+        step=0.05,
+        help="Lower values detect more duplicates"
+    )
+    
+    config.MAX_WORKERS = st.sidebar.slider(
+        "Max Concurrent Workers",
+        min_value=1,
+        max_value=20,
+        value=10,
+        step=1,
+        help="Higher values process faster but may hit rate limits"
+    )
+    
+    if st.sidebar.button("🚀 Start Analysis", type="primary", disabled=not urls):
+        with st.spinner("🔄 Analyzing..."):
+            results = asyncio.run(analyze_urls_with_progress(urls, config))
+            
+            if "error" not in results:
+                display_results(results)
+                create_visualizations(results)
+            else:
+                st.error(f"❌ Analysis failed: {results['error']}")
+    
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("Built with ❤️ using Streamlit and AI")
+
 
 if __name__ == "__main__":
-    app = StreamlitApp()
-    app.run()
-    
-    # Add export section at the bottom
-    st.divider()
-    st.header("📤 Export Results")
-    app.export_results()
+    main()
