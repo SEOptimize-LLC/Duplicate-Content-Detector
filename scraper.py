@@ -3,9 +3,11 @@
 import asyncio
 import aiohttp
 import logging
-from typing import List, Optional
+from typing import List, Dict, Optional
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
+import newspaper
+from newspaper import Article
 import chardet
 import time
 from dataclasses import dataclass
@@ -42,7 +44,6 @@ class ScrapedContent:
             self.content_hash = hashlib.md5(
                 self.content.encode('utf-8')
             ).hexdigest()
-
 
 class WebScraper:
     """Advanced web scraper with caching and intelligent extraction."""
@@ -134,12 +135,117 @@ class WebScraper:
                 
         return None
         
+    def _remove_boilerplate(self, soup: BeautifulSoup) -> BeautifulSoup:
+        """Remove common boilerplate elements like nav, footer, sidebar."""
+        # Remove navigation elements
+        for element in soup.find_all(['nav', 'header', 'footer', 'aside']):
+            element.decompose()
+            
+        # Remove common navigation classes
+        nav_classes = [
+            'nav', 'navbar', 'navigation', 'menu', 'main-menu',
+            'primary-menu', 'secondary-menu', 'sidebar', 'widget',
+            'footer', 'site-footer', 'page-footer', 'colophon',
+            'social-links', 'social-media', 'share-buttons'
+        ]
+        
+        for class_name in nav_classes:
+            for element in soup.find_all(class_=lambda x: x and class_name in str(x).lower()):
+                element.decompose()
+                
+        # Remove common IDs
+        nav_ids = [
+            'nav', 'navigation', 'menu', 'sidebar', 'footer',
+            'header', 'masthead', 'colophon', 'social'
+        ]
+        
+        for id_name in nav_ids:
+            for element in soup.find_all(id=lambda x: x and id_name in str(x).lower()):
+                element.decompose()
+                
+        return soup
+        
+    def _extract_main_content(self, soup: BeautifulSoup) -> str:
+        """Extract main content, excluding boilerplate."""
+        # Remove boilerplate first
+        soup = self._remove_boilerplate(soup)
+        
+        # Common main content selectors
+        content_selectors = [
+            'main', 'article', '[role="main"]', '.content', '.main-content',
+            '.post-content', '.entry-content', '#content', '#main-content',
+            '.post-body', '.article-content', '.entry-summary', '.post-text'
+        ]
+        
+        # Try to find main content area
+        content = ""
+        for selector in content_selectors:
+            elements = soup.select(selector)
+            for element in elements:
+                text = element.get_text(separator=' ', strip=True)
+                if len(text) > len(content):
+                    content = text
+                    
+        if not content:
+            # Fallback to body content, but remove scripts/styles
+            for script in soup(["script", "style", "nav", "header", "footer", "aside"]):
+                script.decompose()
+            content = soup.get_text(separator=' ', strip=True)
+            
+        return content
+        
+    def _extract_with_newspaper(self, url: str, html: str) -> Optional[ScrapedContent]:
+        """Extract content using newspaper3k for better accuracy."""
+        try:
+            article = Article(url)
+            article.set_html(html)
+            article.parse()
+            
+            if not article.text or len(article.text) < self.config.MIN_CONTENT_LENGTH:
+                return None
+                
+            soup = BeautifulSoup(html, 'html.parser')
+            
+            # Clean the soup to remove boilerplate
+            soup = self._remove_boilerplate(soup)
+            
+            # Extract headings from cleaned content
+            headings = []
+            for tag in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                headings.extend([h.get_text(strip=True) for h in soup.find_all(tag)])
+                
+            # Extract images and links from cleaned content
+            images = [img.get('src') for img in soup.find_all('img') if img.get('src')]
+            links = [a.get('href') for a in soup.find_all('a') if a.get('href')]
+            links = [urljoin(url, link) for link in links]
+            
+            return ScrapedContent(
+                url=url,
+                title=article.title or "",
+                content=article.text,
+                meta_description=article.meta_description or "",
+                headings=headings,
+                word_count=len(article.text.split()),
+                language=article.meta_lang or "en",
+                publish_date=article.publish_date.isoformat() if article.publish_date else None,
+                author=", ".join(article.authors) if article.authors else None,
+                images=images,
+                links=links
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Newspaper extraction error for {url}: {e}")
+            return None
+            
     def _extract_with_bs4(self, url: str, html: str) -> Optional[ScrapedContent]:
-        """Extract content using BeautifulSoup (fallback method)."""
+        """Fallback extraction using BeautifulSoup with boilerplate removal."""
         try:
             soup = BeautifulSoup(html, 'html.parser')
             
-            # Remove script and style elements
+            # Remove boilerplate elements
+            soup = self._remove_boilerplate(soup)
+            
+            # Remove remaining script and style elements
             for script in soup(["script", "style"]):
                 script.decompose()
                 
@@ -152,35 +258,17 @@ class WebScraper:
             meta_description = meta_desc.get('content', '') if meta_desc else ""
             
             # Extract main content
-            content_selectors = [
-                'main', 'article', '[role="main"]', '.content', '.main-content',
-                '.post-content', '.entry-content', '#content', '#main-content',
-                'div[class*="content"]', 'div[class*="article"]'
-            ]
+            content = self._extract_main_content(soup)
             
-            content = ""
-            for selector in content_selectors:
-                elements = soup.select(selector)
-                if elements:
-                    content = elements[0].get_text(separator=' ', strip=True)
-                    if len(content) > self.config.MIN_CONTENT_LENGTH:
-                        break
-                        
-            if not content:
-                # Fallback to body content
-                body = soup.find('body')
-                if body:
-                    content = body.get_text(separator=' ', strip=True)
-                    
             if len(content) < self.config.MIN_CONTENT_LENGTH:
                 return None
                 
-            # Extract headings
+            # Extract headings from cleaned content
             headings = []
             for tag in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
                 headings.extend([h.get_text(strip=True) for h in soup.find_all(tag)])
                 
-            # Extract images and links
+            # Extract images and links from cleaned content
             images = [img.get('src') for img in soup.find_all('img') if img.get('src')]
             links = [a.get('href') for a in soup.find_all('a') if a.get('href')]
             links = [urljoin(url, link) for link in links]
@@ -192,7 +280,7 @@ class WebScraper:
                 meta_description=meta_description,
                 headings=headings,
                 word_count=len(content.split()),
-                language="en",  # Default fallback
+                language="en",
                 images=images,
                 links=links
             )
@@ -201,6 +289,29 @@ class WebScraper:
             self.logger.error(f"BS4 extraction error for {url}: {e}")
             return None
             
+    def _clean_content(self, text: str) -> str:
+        """Clean extracted content by removing common patterns."""
+        # Remove common navigation phrases
+        nav_phrases = [
+            'home', 'about', 'contact', 'privacy policy', 'terms of service',
+            'copyright', 'all rights reserved', 'sitemap', 'search',
+            'menu', 'navigation', 'footer', 'sidebar', 'widget'
+        ]
+        
+        # Split into lines and filter
+        lines = text.split('\n')
+        cleaned_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if len(line) > 20:  # Skip very short lines
+                # Skip lines with navigation phrases
+                lower_line = line.lower()
+                if not any(phrase in lower_line for phrase in nav_phrases):
+                    cleaned_lines.append(line)
+        
+        return ' '.join(cleaned_lines)
+        
     async def scrape_url(self, url: str) -> Optional[ScrapedContent]:
         """Scrape a single URL with caching."""
         # Check cache first
@@ -212,10 +323,21 @@ class WebScraper:
         if not html:
             return None
             
-        # Use BS4 extraction (removed newspaper3k dependency)
-        content = self._extract_with_bs4(url, html)
+        # Try newspaper extraction first
+        content = self._extract_with_newspaper(url, html)
+        if not content:
+            # Fallback to BS4
+            content = self._extract_with_bs4(url, html)
             
         if content:
+            # Clean the content
+            content.content = self._clean_content(content.content)
+            content.word_count = len(content.content.split())
+            
+            # Skip if content is too short after cleaning
+            if len(content.content) < self.config.MIN_CONTENT_LENGTH:
+                return None
+                
             self._save_to_cache(content)
             
         return content
