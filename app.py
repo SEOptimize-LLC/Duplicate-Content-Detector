@@ -1,22 +1,22 @@
-"""Enterprise-grade duplicate content detector with blazing fast performance."""
+"""Enhanced Streamlit app for duplicate content detection with full functionality."""
 
 import streamlit as st
-import pandas as pd
-import json
 import logging
-import time
-from datetime import datetime
-import plotly.express as px
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import requests
-from bs4 import BeautifulSoup
-import re
-from urllib.parse import urljoin
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-from difflib import SequenceMatcher
+import pandas as pd
 import numpy as np
+import time
+import requests
+import asyncio
+from typing import List, Tuple, Optional
+from urllib.parse import urlparse, urljoin
+from bs4 import BeautifulSoup
+import validators
 from config import Config
+from scraper import WebScraper, ScrapedContent
+from detector import DuplicateDetector, DuplicateResult
+import concurrent.futures
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,15 +24,15 @@ logger = logging.getLogger(__name__)
 
 # Page configuration
 st.set_page_config(
-    page_title="Enterprise Duplicate Content Detector",
-    page_icon="🚀",
+    page_title="AI Duplicate Content Detector",
+    page_icon="🔍",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # Custom CSS
 st.markdown("""
-    <style>
+<style>
     .main { padding: 0rem 1rem; }
     .stProgress .st-bo { background-color: #1f77b4; }
     .metric-card {
@@ -41,233 +41,48 @@ st.markdown("""
         border-radius: 0.5rem;
         margin: 0.5rem 0;
     }
-    </style>
+    .url-input { min-height: 120px; }
+    .error-message { color: #ff4b4b; font-size: 0.8em; }
+    .success-message { color: #00c851; font-size: 0.9em; }
+</style>
 """, unsafe_allow_html=True)
 
 
-@st.cache_data
-def load_config() -> Config:
-    """Load configuration."""
-    return Config()
+@st.cache_resource
+def init_detector():
+    """Initialize the duplicate detector with caching."""
+    return DuplicateDetector(Config())
 
 
-@st.cache_data
-def load_dataframe(uploaded_file) -> pd.DataFrame:
-    """Load dataframe from uploaded file."""
+@st.cache_resource
+def init_scraper():
+    """Initialize the web scraper."""
+    return WebScraper(Config())
+
+
+def create_session_with_retries() -> requests.Session:
+    """Create a requests session with retry strategy."""
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=3,
+        status_forcelist=[429, 500, 502, 503, 504],
+        method_whitelist=["HEAD", "GET", "OPTIONS"],
+        backoff_factor=1
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
+def extract_urls_from_sitemap(sitemap_url: str) -> List[str]:
+    """Extract URLs from XML sitemap with comprehensive error handling."""
     try:
-        if uploaded_file.name.endswith('.csv'):
-            return pd.read_csv(uploaded_file)
-        elif uploaded_file.name.endswith(('.xlsx', '.xls')):
-            return pd.read_excel(uploaded_file)
-        else:
-            st.error("Unsupported file format. Please upload CSV or Excel files.")
-            return None
-    except Exception as e:
-        st.error(f"Error reading file: {str(e)}")
-        return None
-
-
-class FastScraper:
-    """Ultra-fast scraper using ThreadPoolExecutor."""
-    
-    def __init__(self, config: Config):
-        self.config = config
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': config.USER_AGENT,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate',
-            'Connection': 'keep-alive',
-        })
-        
-    def extract_content(self, url: str) -> dict:
-        """Extract content from URL using fast extraction."""
-        try:
-            response = self.session.get(
-                url, 
-                timeout=self.config.REQUEST_TIMEOUT,
-                allow_redirects=True
-            )
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'lxml')
-            
-            # Remove scripts and styles
-            for script in soup(["script", "style", "nav", "header", "footer", "aside"]):
-                script.decompose()
-            
-            # Extract title
-            title = soup.find('title')
-            title = title.get_text(strip=True) if title else ""
-            
-            # Extract meta description
-            meta_desc = soup.find('meta', attrs={'name': 'description'})
-            meta_description = meta_desc.get('content', '') if meta_desc else ""
-            
-            # Extract main content
-            content_selectors = [
-                'main', 'article', '[role="main"]', '.content', '.main-content',
-                '.post-content', '.entry-content', '#content', '#main-content'
-            ]
-            
-            content = ""
-            for selector in content_selectors:
-                elements = soup.select(selector)
-                for element in elements:
-                    text = element.get_text(separator=' ', strip=True)
-                    if len(text) > len(content):
-                        content = text
-                        break
-                    
-            if not content:
-                content = soup.get_text(separator=' ', strip=True)
-            
-            # Clean content
-            content = re.sub(r'\s+', ' ', content).strip()
-            
-            if len(content) < self.config.MIN_CONTENT_LENGTH:
-                return None
-            
-            # Extract links
-            links = [urljoin(url, a.get('href')) for a in soup.find_all('a') if a.get('href')]
-            
-            return {
-                'url': url,
-                'title': title,
-                'content': content,
-                'meta_description': meta_description,
-                'word_count': len(content.split()),
-                'links': links[:10]  # Limit to first 10 links
-            }
-            
-        except Exception as e:
-            logger.warning(f"Failed to extract {url}: {e}")
-            return None
-    
-    def scrape_batch(self, urls: list, progress_callback=None) -> list:
-        """Scrape URLs in parallel batches."""
-        results = []
-        completed = 0
-        
-        with ThreadPoolExecutor(max_workers=self.config.MAX_WORKERS) as executor:
-            future_to_url = {executor.submit(self.extract_content, url): url for url in urls}
-            
-            for future in as_completed(future_to_url):
-                url = future_to_url[future]
-                try:
-                    result = future.result()
-                    if result:
-                        results.append(result)
-                    
-                    completed += 1
-                    if progress_callback:
-                        progress_callback(completed, len(urls), url)
-                        
-                except Exception as e:
-                    completed += 1
-                    if progress_callback:
-                        progress_callback(completed, len(urls), url)
-                    logger.warning(f"Error processing {url}: {e}")
-        
-        return results
-
-
-class FastDuplicateDetector:
-    """Ultra-fast duplicate detection using optimized algorithms."""
-    
-    def __init__(self, config: Config):
-        self.config = config
-        
-    def calculate_jaccard_similarity(self, text1: str, text2: str, n: int = 3) -> float:
-        """Calculate Jaccard similarity using n-grams."""
-        def get_ngrams(text: str, n: int) -> set:
-            words = text.lower().split()
-            return {' '.join(words[i:i+n]) for i in range(len(words)-n+1)}
-        
-        ngrams1 = get_ngrams(text1, n)
-        ngrams2 = get_ngrams(text2, n)
-        
-        if not ngrams1 or not ngrams2:
-            return 0.0
-            
-        intersection = len(ngrams1.intersection(ngrams2))
-        union = len(ngrams1.union(ngrams2))
-        
-        return intersection / union if union > 0 else 0.0
-    
-    def calculate_tfidf_similarity(self, texts: list) -> np.ndarray:
-        """Calculate TF-IDF similarity matrix."""
-        if len(texts) < 2:
-            return np.array([])
-        
-        vectorizer = TfidfVectorizer(
-            max_features=5000,
-            stop_words='english',
-            ngram_range=(1, 2),
-            max_df=0.85,
-            min_df=1
-        )
-        
-        tfidf_matrix = vectorizer.fit_transform(texts)
-        similarity_matrix = cosine_similarity(tfidf_matrix)
-        
-        return similarity_matrix
-    
-    def detect_duplicates_fast(self, contents: list) -> list:
-        """Fast duplicate detection using optimized algorithms."""
-        if len(contents) < 2:
+        if not sitemap_url.strip():
             return []
-        
-        # Extract texts
-        texts = [item['content'] for item in contents]
-        urls = [item['url'] for item in contents]
-        
-        # Calculate TF-IDF similarity matrix
-        similarity_matrix = self.calculate_tfidf_similarity(texts)
-        
-        # Find duplicates
-        duplicates = []
-        n = len(contents)
-        
-        for i in range(n):
-            for j in range(i + 1, n):
-                similarity = similarity_matrix[i][j]
-                
-                if similarity >= self.config.SEMANTIC_THRESHOLD:
-                    # Calculate additional metrics for confidence
-                    jaccard_sim = self.calculate_jaccard_similarity(texts[i], texts[j])
-                    
-                    # Weighted similarity score
-                    final_score = (similarity * 0.7 + jaccard_sim * 0.3)
-                    
-                    if final_score >= self.config.SEMANTIC_THRESHOLD:
-                        # Find common content
-                        matcher = SequenceMatcher(None, texts[i], texts[j])
-                        common = []
-                        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-                            if tag == 'equal':
-                                common.append(texts[i][i1:i2])
-                        
-                        common_content = ' '.join(common)[:500] + '...' if common else ""
-                        
-                        duplicates.append({
-                            'url1': urls[i],
-                            'url2': urls[j],
-                            'similarity_score': final_score,
-                            'confidence': min(1.0, final_score * 1.1),
-                            'common_content': common_content,
-                            'is_duplicate': True
-                        })
-        
-        return sorted(duplicates, key=lambda x: x['similarity_score'], reverse=True)
-
-
-def extract_sitemap_urls(sitemap_url: str) -> list:
-    """Extract URLs from XML sitemap."""
-    try:
-        import requests
-        response = requests.get(sitemap_url, timeout=30)
+            
+        session = create_session_with_retries()
+        response = session.get(sitemap_url, timeout=30)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, 'xml')
@@ -275,219 +90,434 @@ def extract_sitemap_urls(sitemap_url: str) -> list:
         
         # Handle regular sitemap
         for loc in soup.find_all('loc'):
-            urls.append(loc.text.strip())
-            
+            url = loc.text.strip()
+            if validate_url(url):
+                urls.append(url)
+        
         # Handle sitemap index
         for sitemap in soup.find_all('sitemap'):
             loc = sitemap.find('loc')
             if loc:
-                nested_urls = extract_sitemap_urls(loc.text.strip())
+                nested_urls = extract_urls_from_sitemap(loc.text.strip())
                 urls.extend(nested_urls)
-                
-        return urls
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_urls = [url for url in urls if not (url in seen or seen.add(url))]
+        
+        return unique_urls
         
     except Exception as e:
-        logger.error(f"Error extracting sitemap URLs: {e}")
+        st.error(f"Error extracting sitemap: {str(e)}")
+        logger.error(f"Sitemap extraction error: {e}")
         return []
 
 
-def analyze_urls_fast(urls: list, config: Config, progress_callback=None) -> dict:
-    """Ultra-fast analysis using ThreadPoolExecutor."""
-    start_time = time.time()
+def validate_url(url: str) -> bool:
+    """Validate URL format with comprehensive checks."""
+    try:
+        if not url or not isinstance(url, str):
+            return False
+            
+        url = url.strip()
+        if not url:
+            return False
+            
+        result = urlparse(url)
+        return all([
+            result.scheme in ['http', 'https'],
+            result.netloc,
+            len(result.netloc) > 3,
+            '.' in result.netloc
+        ])
+    except Exception:
+        return False
+
+
+def extract_content_from_url(url: str, session: requests.Session) -> Tuple[Optional[ScrapedContent], Optional[str]]:
+    """Extract content from a single URL with detailed error reporting."""
+    try:
+        if not validate_url(url):
+            return None, "Invalid URL format"
+        
+        response = session.get(
+            url,
+            timeout=30,
+            headers={
+                'User-Agent': Config.USER_AGENT,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+            }
+        )
+        response.raise_for_status()
+        
+        # Check content type
+        content_type = response.headers.get('content-type', '').lower()
+        if 'text/html' not in content_type:
+            return None, f"Invalid content type: {content_type}"
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Remove unwanted elements
+        for element in soup(['script', 'style', 'nav', 'footer', 'aside']):
+            element.decompose()
+        
+        # Extract title
+        title = soup.find('title')
+        title = title.get_text(strip=True) if title else ""
+        
+        # Extract meta description
+        meta_desc = soup.find('meta', attrs={'name': 'description'})
+        meta_description = meta_desc.get('content', '')[:500] if meta_desc else ""
+        
+        # Extract main content with multiple strategies
+        content = ""
+        content_selectors = [
+            'main', 'article', '[role="main"]', '.content', '.main-content',
+            '.post-content', '.entry-content', '#content', '#main-content',
+            '.article-content', '.post-body', '.entry-summary'
+        ]
+        
+        for selector in content_selectors:
+            elements = soup.select(selector)
+            if elements:
+                content = ' '.join([elem.get_text(separator=' ', strip=True) for elem in elements])
+                if len(content) > Config.MIN_CONTENT_LENGTH:
+                    break
+        
+        # Fallback to body content
+        if not content or len(content) < Config.MIN_CONTENT_LENGTH:
+            body = soup.find('body')
+            if body:
+                content = body.get_text(separator=' ', strip=True)
+        
+        # Clean content
+        content = ' '.join(content.split())
+        
+        if len(content) < Config.MIN_CONTENT_LENGTH:
+            return None, f"Content too short ({len(content)} chars)"
+        
+        # Extract headings
+        headings = []
+        for tag in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+            headings.extend([h.get_text(strip=True) for h in soup.find_all(tag)])
+        
+        # Extract images and links
+        images = [img.get('src') for img in soup.find_all('img') if img.get('src')]
+        links = [a.get('href') for a in soup.find_all('a') if a.get('href')]
+        links = [urljoin(url, link) for link in links]
+        
+        return ScrapedContent(
+            url=url,
+            title=title,
+            content=content,
+            meta_description=meta_description,
+            headings=headings,
+            word_count=len(content.split()),
+            language="en",
+            images=images,
+            links=links
+        ), None
+        
+    except requests.exceptions.Timeout:
+        return None, "Request timeout"
+    except requests.exceptions.ConnectionError:
+        return None, "Connection error"
+    except requests.exceptions.HTTPError as e:
+        return None, f"HTTP {e.response.status_code}"
+    except Exception as e:
+        return None, str(e)
+
+
+def process_urls_concurrent(urls: List[str], progress_bar, status_text) -> List[ScrapedContent]:
+    """Process URLs concurrently with rate limiting and error handling."""
+    contents = []
+    failed_urls = []
     
-    # Phase 1: Fast scraping
-    scraper = FastScraper(config)
-    contents = scraper.scrape_batch(urls, progress_callback)
+    # Create session with retries
+    session = create_session_with_retries()
     
-    if not contents:
-        return {"error": "No content could be scraped", "contents": [], "results": []}
+    # Rate limiting configuration
+    max_workers = min(Config.MAX_WORKERS, 10)
+    delay_between_batches = 0.5
     
-    # Phase 2: Fast duplicate detection
-    detector = FastDuplicateDetector(config)
-    duplicates = detector.detect_duplicates_fast(contents)
+    # Process URLs in batches
+    total_urls = len(urls)
+    processed = 0
     
-    total_time = time.time() - start_time
+    for i in range(0, total_urls, max_workers):
+        batch_urls = urls[i:i + max_workers]
+        
+        # Process batch concurrently
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_url = {
+                executor.submit(extract_content_from_url, url, session): url 
+                for url in batch_urls
+            }
+            
+            for future in concurrent.futures.as_completed(future_to_url):
+                url = future_to_url[future]
+                processed += 1
+                
+                try:
+                    content, error = future.result()
+                    if content:
+                        contents.append(content)
+                    else:
+                        failed_urls.append((url, error))
+                        
+                except Exception as e:
+                    failed_urls.append((url, str(e)))
+                
+                # Update progress
+                progress = processed / total_urls
+                progress_bar.progress(progress)
+                status_text.text(f"Processing URL {processed}/{total_urls}")
+        
+        # Rate limiting between batches
+        if i + max_workers < total_urls:
+            time.sleep(delay_between_batches)
     
-    return {
-        "contents": contents,
-        "results": duplicates,
-        "summary": {
-            "total_urls": len(urls),
-            "content_scraped": len(contents),
-            "duplicates_found": len(duplicates),
-            "similarity_threshold": config.SEMANTIC_THRESHOLD,
-            "processing_time": total_time,
-            "urls_per_second": len(urls) / total_time
-        }
-    }
+    # Display failed URLs
+    if failed_urls:
+        with st.sidebar.expander(f"Failed URLs ({len(failed_urls)})"):
+            for url, error in failed_urls:
+                st.text(f"❌ {url}")
+                st.caption(error)
+    
+    return contents
 
 
 def main():
-    """Main application."""
-    st.title("🚀 Enterprise Duplicate Content Detector")
-    st.markdown("Ultra-fast duplicate content detection for large-scale websites")
+    """Main application with full functionality."""
+    st.title("🔍 AI-Powered Duplicate Content Detector")
+    st.markdown("Detect duplicate content using advanced AI/NLP techniques")
     
-    st.sidebar.header("📋 Input Options")
-    
-    input_method = st.sidebar.radio(
-        "Choose input method:",
-        ["Paste URLs", "Upload File", "Sitemap URL"]
-    )
-    
-    urls = []
-    
-    if input_method == "Paste URLs":
-        url_input = st.sidebar.text_area(
-            "Enter URLs (one per line):",
-            height=200,
-            placeholder="https://example.com/page1\nhttps://example.com/page2"
-        )
-        urls = [url.strip() for url in url_input.split('\n') if url.strip()]
+    # Sidebar configuration
+    with st.sidebar:
+        st.header("Configuration")
         
-    elif input_method == "Upload File":
-        uploaded_file = st.sidebar.file_uploader(
-            "Upload CSV or Excel file",
-            type=['csv', 'xlsx', 'xls'],
-            help="Upload a file containing URLs. The app will detect URL columns automatically."
+        # Input method selection
+        input_method = st.radio(
+            "Input Method",
+            ["Manual URLs", "Sitemap URL", "Text Input", "File Upload"],
+            help="Choose how to provide URLs for analysis"
         )
         
-        if uploaded_file is not None:
-            df = load_dataframe(uploaded_file)
-            if df is not None:
-                columns = df.columns.tolist()
-                url_column = st.selectbox("Select the column containing URLs:", columns)
-                
-                if url_column:
-                    urls = df[url_column].dropna().astype(str).tolist()
-                    urls = [url.strip() for url in urls if url.strip()]
-                    st.sidebar.success(f"✅ Found {len(urls)} URLs")
-                
-    elif input_method == "Sitemap URL":
-        sitemap_url = st.sidebar.text_input(
-            "Enter sitemap URL:",
-            placeholder="https://example.com/sitemap.xml"
-        )
-        if sitemap_url:
-            urls = extract_sitemap_urls(sitemap_url)
-            if urls:
-                st.sidebar.success(f"✅ Found {len(urls)} URLs from sitemap")
-    
-    st.sidebar.header("⚙️ Configuration")
-    config = load_config()
-    
-    config.SEMANTIC_THRESHOLD = st.sidebar.slider(
-        "Similarity Threshold",
-        min_value=0.5,
-        max_value=1.0,
-        value=0.75,
-        step=0.05,
-        help="Lower values detect more duplicates"
-    )
-    
-    config.MAX_WORKERS = st.sidebar.slider(
-        "Max Concurrent Workers",
-        min_value=1,
-        max_value=50,
-        value=25,
-        step=1,
-        help="Higher values process faster but may hit rate limits"
-    )
-    
-    config.REQUEST_TIMEOUT = st.sidebar.slider(
-        "Request Timeout (seconds)",
-        min_value=5,
-        max_value=60,
-        value=15,
-        step=5
-    )
-    
-    if st.sidebar.button("🚀 Start Fast Analysis", type="primary", disabled=not urls):
-        # Create progress containers
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        speed_text = st.empty()
+        urls = []
         
-        def update_progress(current: int, total: int, message: str):
-            """Update progress with real-time feedback."""
-            progress = current / total if total > 0 else 0
-            progress_bar.progress(progress)
-            status_text.text(message)
+        # URL input based on method
+        if input_method == "Manual URLs":
+            url_input = st.text_area(
+                "Enter URLs (one per line)",
+                placeholder="https://example.com/page1\nhttps://example.com/page2",
+                height=150,
+                key="manual_urls"
+            )
+            urls = [url.strip() for url in url_input.split('\n') if url.strip()]
             
-            if current > 0 and total > 0:
-                elapsed = time.time() - start_time
-                speed = current / elapsed
-                speed_text.text(f"⚡ {current}/{total} URLs ({speed:.1f} URLs/sec)")
+        elif input_method == "Sitemap URL":
+            sitemap_url = st.text_input(
+                "Sitemap URL",
+                placeholder="https://example.com/sitemap.xml",
+                help="Enter the full URL to your XML sitemap"
+            )
+            if sitemap_url:
+                with st.spinner("Extracting URLs from sitemap..."):
+                    urls = extract_urls_from_sitemap(sitemap_url)
+                    st.success(f"Found {len(urls)} URLs in sitemap")
+                    
+        elif input_method == "Text Input":
+            text_input = st.text_area(
+                "Enter URLs separated by commas or newlines",
+                placeholder="https://example.com/page1, https://example.com/page2",
+                height=150,
+                key="text_urls"
+            )
+            urls = [url.strip() for url in text_input.replace(',', '\n').split('\n') if url.strip()]
         
-        start_time = time.time()
+        elif input_method == "File Upload":
+            uploaded_file = st.file_uploader(
+                "Upload a text file with URLs",
+                type=['txt', 'csv'],
+                help="Upload a file with one URL per line"
+            )
+            if uploaded_file:
+                content = uploaded_file.read().decode('utf-8')
+                urls = [url.strip() for url in content.split('\n') if url.strip()]
         
-        with st.spinner("🔄 Processing..."):
-            results = analyze_urls_fast(urls, config, update_progress)
+        # Advanced settings
+        with st.expander("Advanced Settings", expanded=False):
+            threshold = st.slider(
+                "Similarity Threshold",
+                min_value=0.0,
+                max_value=1.0,
+                value=Config.SEMANTIC_THRESHOLD,
+                step=0.01,
+                help="Lower values detect more duplicates"
+            )
+            
+            min_content_length = st.number_input(
+                "Minimum Content Length (words)",
+                min_value=50,
+                max_value=1000,
+                value=Config.MIN_CONTENT_LENGTH,
+                step=10,
+                help="Filter out pages with insufficient content"
+            )
+            
+            max_workers = st.number_input(
+                "Max Concurrent Requests",
+                min_value=1,
+                max_value=20,
+                value=Config.MAX_WORKERS,
+                step=1,
+                help="Higher values process faster but may hit rate limits"
+            )
         
-        # Final update
-        progress_bar.progress(1.0)
-        status_text.text("✅ Complete!")
-        speed_text.text(f"🎯 Total time: {results['summary']['processing_time']:.1f}s")
+        # Update configuration
+        Config.SEMANTIC_THRESHOLD = threshold
+        Config.MIN_CONTENT_LENGTH = min_content_length
+        Config.MAX_WORKERS = max_workers
+    
+    # Main content area
+    if urls:
+        st.header("Processing URLs")
         
-        # Display results
-        st.header("⚡ Enterprise Analysis Summary")
-        
+        # Display URL statistics
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Total URLs", results["summary"]["total_urls"])
+            st.metric("Total URLs", len(urls))
         with col2:
-            st.metric("Content Scraped", results["summary"]["content_scraped"])
+            st.metric("Threshold", f"{Config.SEMANTIC_THRESHOLD:.2f}")
         with col3:
-            st.metric("Duplicates Found", results["summary"]["duplicates_found"])
+            st.metric("Min Length", f"{Config.MIN_CONTENT_LENGTH} words")
         with col4:
-            st.metric("Speed", f"{results['summary']['urls_per_second']:.1f} URLs/sec")
+            st.metric("Workers", Config.MAX_WORKERS)
         
-        if results["summary"]["urls_per_second"] > 5:
-            st.success("🚀 **Enterprise Performance Achieved!**")
-        
-        duplicates = results["results"]
-        
-        if duplicates:
-            st.header("🔍 Fast Duplicate Results")
+        # Process URLs
+        if st.button("Start Analysis", type="primary", use_container_width=True):
+            progress_bar = st.progress(0)
+            status_text = st.empty()
             
-            # Display in a clean table
-            df_display = pd.DataFrame([
-                {
-                    "URL 1": d["url1"],
-                    "URL 2": d["url2"],
-                    "Similarity": f"{d['similarity_score']:.1%}",
-                    "Confidence": f"{d['confidence']:.1%}"
-                }
-                for d in duplicates
-            ])
-            
-            st.dataframe(df_display, use_container_width=True)
-            
-            # Export options
-            st.header("📥 Export Results")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                csv = df_display.to_csv(index=False)
-                st.download_button(
-                    label="📄 Download CSV",
-                    data=csv,
-                    file_name=f"enterprise_duplicate_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
-                )
-            
-            with col2:
-                json_data = json.dumps({
-                    "summary": results["summary"],
-                    "duplicates": duplicates
-                }, indent=2)
-                st.download_button(
-                    label="📋 Download JSON",
-                    data=json_data,
-                    file_name=f"enterprise_duplicate_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json"
-                )
-        else:
-            st.success("✅ No duplicates found above the threshold!")
+            try:
+                # Validate URLs
+                valid_urls = [url for url in urls if validate_url(url)]
+                invalid_urls = [url for url in urls if not validate_url(url)]
+                
+                if invalid_urls:
+                    st.warning(f"Found {len(invalid_urls)} invalid URLs")
+                
+                if not valid_urls:
+                    st.error("No valid URLs to process")
+                    return
+                
+                # Scrape content
+                contents = process_urls_concurrent(valid_urls, progress_bar, status_text)
+                
+                if not contents:
+                    st.error("No content could be extracted. Please check the URLs and try again.")
+                    return
+                
+                st.success(f"Successfully extracted content from {len(contents)} URLs")
+                
+                # Detect duplicates
+                with st.spinner("Analyzing content for duplicates..."):
+                    detector = init_detector()
+                    results = detector.detect_duplicates(contents)
+                
+                # Display results
+                st.header("Analysis Results")
+                
+                if results:
+                    # Summary metrics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Pairs", len(results))
+                    with col2:
+                        duplicates = [r for r in results if r.is_duplicate]
+                        st.metric("Duplicates Found", len(duplicates))
+                    with col3:
+                        avg_similarity = np.mean([r.similarity_score for r in results])
+                        st.metric("Avg Similarity", f"{avg_similarity:.3f}")
+                    with col4:
+                        max_similarity = max([r.similarity_score for r in results]) if results else 0
+                        st.metric("Max Similarity", f"{max_similarity:.3f}")
+                    
+                    # Results visualization
+                    st.subheader("Detailed Results")
+                    
+                    # Create DataFrame
+                    df_data = []
+                    for result in results:
+                        df_data.append({
+                            'URL 1': result.url1,
+                            'URL 2': result.url2,
+                            'Similarity': f"{result.similarity_score:.3f}",
+                            'Confidence': f"{result.confidence:.2f}",
+                            'Is Duplicate': 'Yes' if result.is_duplicate else 'No',
+                            'Common Content': result.common_content[:300] + '...' 
+                            if len(result.common_content) > 300 else result.common_content
+                        })
+                    
+                    df = pd.DataFrame(df_data)
+                    
+                    # Filter duplicates
+                    duplicate_df = df[df['Is Duplicate'] == 'Yes']
+                    
+                    if not duplicate_df.empty:
+                        st.warning(f"🚨 Found {len(duplicate_df)} duplicate pairs above threshold")
+                        
+                        # Display duplicates prominently
+                        st.subheader("🎯 Duplicate Pairs")
+                        st.dataframe(duplicate_df, use_container_width=True)
+                        
+                        # Similarity distribution
+                        st.subheader("📊 Similarity Distribution")
+                        similarity_scores = [r.similarity_score for r in results]
+                        st.bar_chart(pd.Series(similarity_scores))
+                        
+                    else:
+                        st.info("✅ No duplicates found above the threshold")
+                    
+                    # Export functionality
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        csv = df.to_csv(index=False)
+                        st.download_button(
+                            label="📥 Download All Results (CSV)",
+                            data=csv,
+                            file_name="duplicate_content_analysis.csv",
+                            mime="text/csv",
+                            use_container_width=True
+                        )
+                    
+                    with col2:
+                        if not duplicate_df.empty:
+                            duplicate_csv = duplicate_df.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Download Duplicates Only (CSV)",
+                                data=duplicate_csv,
+                                file_name="duplicates_only.csv",
+                                mime="text/csv",
+                                use_container_width=True
+                            )
+                    
+                else:
+                    st.info("No duplicate pairs found")
+                
+            except Exception as e:
+                st.error(f"Error during analysis: {str(e)}")
+                logger.exception("Analysis error")
+    
+    else:
+        st.info("👆 Please enter URLs to analyze using one of the input methods above")
+
+    # Footer
+    st.markdown("---")
+    st.markdown("*Built with Streamlit, AI/NLP techniques, and ❤️*")
 
 
 if __name__ == "__main__":
