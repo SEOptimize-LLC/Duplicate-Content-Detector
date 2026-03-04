@@ -132,8 +132,8 @@ def build_duplicate_prompt(
         "For each pair use this exact sub-structure (keep Pair numbers"
         " matching the input data above):",
         "",
-        "**Pair N — [Short descriptive title, e.g., 'Service hub vs."
-        " individual service page']**",
+        "### Pair N — [Short descriptive title, e.g., 'Service hub vs."
+        " individual service page']",
         "- **URL A:** (paste the exact URL A from the input data)",
         "- **URL B:** (paste the exact URL B from the input data)",
         "- **Priority:** 🔴 Critical / 🟠 High / 🟡 Medium / 🔵 Low",
