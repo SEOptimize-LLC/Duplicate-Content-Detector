@@ -6,6 +6,7 @@ Uses OpenRouter to generate specific remediation advice for flagged URL pairs/gr
 import os
 import sys
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -19,6 +20,7 @@ from utils.openrouter_handler import (  # noqa: E402
     AVAILABLE_MODELS,
     stream_recommendation,
 )
+from utils.url_exclusions import is_homepage, should_exclude  # noqa: E402
 
 st.set_page_config(
     page_title="AI Recommendations — Duplicate Content Detector",
@@ -118,6 +120,7 @@ pair_source = st.radio(
 )
 
 selected_pairs: list[dict] = []
+additional_context: str = ""
 
 if pair_source == "Combined Risk Dashboard" and has_combined:
     combined_df: pd.DataFrame = st.session_state.combined_df
@@ -199,8 +202,22 @@ if pair_source == "Combined Risk Dashboard" and has_combined:
             })
 
 elif pair_source == "Semantic Similarity Pairs" and has_semantic:
-    url_df = st.session_state.url_df
-    sim_matrix = st.session_state.sim_matrix
+    url_df_orig = st.session_state.url_df
+    sim_matrix_full = st.session_state.sim_matrix
+
+    # Apply the same exclusion mask as other pages so excluded URLs don't appear
+    _keep = np.ones(len(url_df_orig), dtype=bool)
+    _excl = st.session_state.get("exclude_patterns", [])
+    if _excl:
+        _keep &= ~url_df_orig["url"].apply(
+            lambda u: should_exclude(u, _excl)).values
+    _prop = st.session_state.get("selected_property") or ""
+    if st.session_state.get("exclude_homepage", True) and _prop:
+        _keep &= ~url_df_orig["url"].apply(
+            lambda u: is_homepage(u, _prop)).values
+    url_df = url_df_orig[_keep].reset_index(drop=True)
+    sim_matrix = sim_matrix_full[np.ix_(_keep, _keep)]
+
     pairs_df = get_pairs_above_threshold(
         url_df, sim_matrix, threshold=THRESHOLD_HIGH, max_pairs=50)
 

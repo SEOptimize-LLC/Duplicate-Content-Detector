@@ -4,6 +4,7 @@ This IS the first page users see. All data sources are configured here.
 """
 
 import os
+import re
 import sys
 import calendar
 from datetime import date, timedelta
@@ -61,21 +62,18 @@ for k, v in defaults.items():
         st.session_state[k] = v
 
 # ─── Migrate stale exclusion patterns ───────────────────────────────────
-# Replace outdated pattern strings — runs on every load, safe to repeat.
-import re as _re
+# Replace outdated pattern strings — only runs when a stale pattern is found.
 _migrations = {"/blog/": "/blog$"}
 
-# 1. Patch the patterns list
-st.session_state.exclude_patterns = [
-    _migrations.get(p, p) for p in st.session_state.exclude_patterns
-]
-
-# 2. Patch the textarea widget state directly (handles stale browser cache)
-if "excl_patterns_text" in st.session_state:
-    _t = st.session_state["excl_patterns_text"]
-    for _old, _new in _migrations.items():
-        _t = _re.sub(r"(?m)^" + _re.escape(_old) + r"$", _new, _t)
-    st.session_state["excl_patterns_text"] = _t
+if any(p in _migrations for p in st.session_state.exclude_patterns):
+    st.session_state.exclude_patterns = [
+        _migrations.get(p, p) for p in st.session_state.exclude_patterns
+    ]
+    if "excl_patterns_text" in st.session_state:
+        _t = st.session_state["excl_patterns_text"]
+        for _old, _new in _migrations.items():
+            _t = re.sub(r"(?m)^" + re.escape(_old) + r"$", _new, _t)
+        st.session_state["excl_patterns_text"] = _t
 
 # ─── Auto-authenticate from stored refresh token ────────────────────────
 
@@ -470,14 +468,12 @@ with st.container(border=True):
             if st.button("✅ Apply", key="apply_excl", type="primary"):
                 st.session_state.exclude_patterns = patterns_from_text(
                     edited_text)
-                st.session_state.sim_matrix = None  # invalidate cache
                 st.success("Exclusions updated.")
                 st.rerun()
         with bcol2:
             if st.button("↺ Reset defaults", key="reset_excl"):
                 st.session_state.exclude_patterns = list(
                     DEFAULT_EXCLUDE_PATTERNS)
-                st.session_state.sim_matrix = None
                 st.success("Reset to defaults.")
                 st.rerun()
 
@@ -537,7 +533,6 @@ The exclusion runs automatically on every analysis page.
             )
             if excl_hp != st.session_state.exclude_homepage:
                 st.session_state.exclude_homepage = excl_hp
-                st.session_state.sim_matrix = None
                 st.rerun()
 
         with info_col:
