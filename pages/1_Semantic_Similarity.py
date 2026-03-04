@@ -19,6 +19,7 @@ from utils.embeddings_handler import (  # noqa: E402
     get_pairs_above_threshold,
     get_summary_stats,
 )
+from utils.url_exclusions import should_exclude  # noqa: E402
 
 st.set_page_config(
     page_title="Semantic Similarity — Duplicate Content Detector",
@@ -41,14 +42,20 @@ if not st.session_state.get(
 url_df: pd.DataFrame = st.session_state.url_df
 embeddings: np.ndarray = st.session_state.embeddings_matrix
 
-# Apply URL filter if set
-filter_urls = st.session_state.get("filter_urls", [])
-if filter_urls:
-    mask = url_df["url"].isin(filter_urls)
+# Apply URL exclusions
+exclude_patterns = st.session_state.get("exclude_patterns", [])
+if exclude_patterns:
+    mask = ~url_df["url"].apply(
+        lambda u: should_exclude(u, exclude_patterns))
+    n_before = len(url_df)
     url_df = url_df[mask].reset_index(drop=True)
     embeddings = embeddings[mask.values]
-    st.info(
-        f"URL filter applied: showing {len(url_df)} of {len(st.session_state.url_df)} URLs")
+    n_excluded = n_before - len(url_df)
+    if n_excluded:
+        st.info(
+            f"URL exclusions active: {n_excluded} URLs filtered out, "
+            f"{len(url_df)} remaining for analysis"
+        )
 
 if len(url_df) < 2:
     st.error("Need at least 2 URLs to compute similarity. Adjust your URL filter.")

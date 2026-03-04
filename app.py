@@ -25,6 +25,12 @@ from utils.gsc_handler import (  # noqa: E402
     logout,
 )
 from utils.openrouter_handler import AVAILABLE_MODELS  # noqa: E402
+from utils.url_exclusions import (  # noqa: E402
+    DEFAULT_EXCLUDE_PATTERNS,
+    apply_exclusions,
+    patterns_from_text,
+    patterns_to_text,
+)
 
 
 st.set_page_config(
@@ -43,7 +49,8 @@ defaults = {
     "selected_property": None, "gsc_token_data": None,
     "cannibalization_findings": None, "url_cannibal_summary": {},
     "combined_df": None, "clusters": None, "cluster_df": None,
-    "url_risk_df": None, "filter_urls": [],
+    "url_risk_df": None,
+    "exclude_patterns": list(DEFAULT_EXCLUDE_PATTERNS),
     "selected_model_id": AVAILABLE_MODELS[0]["id"],
     "selected_model_label": AVAILABLE_MODELS[0]["label"],
 }
@@ -405,84 +412,92 @@ The app auto-detects the URL column and all embedding dimensions.
                     st.rerun()
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — URL Filter (optional)
+# SECTION 3 — URL Exclusions
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with st.container(border=True):
     hcol, tcol = st.columns([5, 1])
     with hcol:
-        st.subheader("3️⃣  URL Filter")
-        st.caption("Optional — restrict analysis to a specific subset of URLs")
+        st.subheader("3️⃣  URL Exclusions")
+        st.caption(
+            "Filter OUT pages that don't benefit from duplicate content analysis — "
+            "contact, legal, blog posts, PPC landing pages, and more"
+        )
     with tcol:
-        filter_on = st.toggle(
+        excl_on = st.toggle(
             "Enable",
-            value=bool(
-                st.session_state.filter_urls),
-            key="filter_toggle")
+            value=True,
+            key="excl_toggle",
+        )
 
-    if filter_on:
-        current = st.session_state.filter_urls
-        if current:
-            st.info(f"Active filter: **{len(current)} URLs**")
-            if st.button("Clear filter", key="clear_filter"):
-                st.session_state.filter_urls = []
+    if excl_on:
+        current_patterns = st.session_state.exclude_patterns
+
+        # ── Pattern editor ────────────────────────────────────────────────
+        edited_text = st.text_area(
+            "Exclusion patterns (one per line)",
+            value=patterns_to_text(current_patterns),
+            height=220,
+            key="excl_patterns_text",
+            help=(
+                "Plain text → substring match (case-insensitive). "
+                "Add $ at the end for end-of-URL match (keeps subpages). "
+                "Lines starting with # are comments."
+            ),
+        )
+
+        bcol1, bcol2, _ = st.columns([1, 1, 3])
+        with bcol1:
+            if st.button("✅ Apply", key="apply_excl", type="primary"):
+                st.session_state.exclude_patterns = patterns_from_text(
+                    edited_text)
+                st.session_state.sim_matrix = None  # invalidate cache
+                st.success("Exclusions updated.")
+                st.rerun()
+        with bcol2:
+            if st.button("↺ Reset defaults", key="reset_excl"):
+                st.session_state.exclude_patterns = list(
+                    DEFAULT_EXCLUDE_PATTERNS)
+                st.session_state.sim_matrix = None
+                st.success("Reset to defaults.")
                 st.rerun()
 
-        tab_paste, tab_file, tab_sitemap = st.tabs(
-            ["📋 Paste URLs", "📁 Upload file", "🗺️ GSC Sitemap"])
+        # ── Live preview (requires embeddings) ───────────────────────────
+        if st.session_state.sf_loaded and st.session_state.url_df is not None:
+            all_urls = st.session_state.url_df["url"].tolist()
+            kept, excluded = apply_exclusions(all_urls, current_patterns)
+            p1, p2, p3 = st.columns(3)
+            p1.metric("Total URLs", len(all_urls))
+            p2.metric("Excluded", len(excluded),
+                      delta=f"−{len(excluded)}", delta_color="inverse")
+            p3.metric("Remaining for analysis", len(kept),
+                      delta=f"+{len(kept)}", delta_color="normal")
 
-        with tab_paste:
-            pasted = st.text_area(
-                "One URL per line",
-                height=120,
-                placeholder="https://example.com/page-1\nhttps://example.com/page-2",
-                key="paste_urls",
-            )
-            if st.button("Apply pasted URLs", key="apply_paste") and pasted:
-                urls = [u.strip() for u in pasted.splitlines()
-                        if u.strip().startswith("http")]
-                if urls:
-                    st.session_state.filter_urls = list(set(urls))
-                    st.success(
-                        f"{len(st.session_state.filter_urls)} URLs set as filter")
-                    st.rerun()
+            if excluded:
+                with st.expander(
+                    f"Preview excluded URLs ({len(excluded)} total)"
+                ):
+                    st.dataframe(
+                        pd.DataFrame({"excluded_url": excluded}),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
-        with tab_file:
-            fup = st.file_uploader(
-                "CSV or TXT with URLs", type=[
-                    "csv", "txt"], key="filter_file")
-            if fup:
-                content = fup.read().decode("utf-8", errors="ignore")
-                try:
-                    df_f = pd.read_csv(pd.io.common.StringIO(content))
-                    url_col_f = next((c for c in df_f.columns if df_f[c].astype(
-                        str).str.startswith("http").any()), None, )
-                    urls = df_f[url_col_f].dropna().astype(
-                        str).tolist() if url_col_f else []
-                except Exception:
-                    urls = [u.strip() for u in content.splitlines()
-                            if u.strip().startswith("http")]
-                if urls:
-                    st.session_state.filter_urls = list(set(urls))
-                    st.success(
-                        f"{len(st.session_state.filter_urls)} URLs loaded")
-                    st.rerun()
-                else:
-                    st.warning("No URLs found in file.")
+        # ── Help ─────────────────────────────────────────────────────────
+        with st.expander("ℹ️ Pattern syntax guide"):
+            st.markdown("""
+| Pattern | Behaviour | Example match |
+|---------|-----------|---------------|
+| `ppc` | Any URL containing "ppc" | `/ppc-landing`, `/google-ppc/` |
+| `/contact` | Any URL containing "/contact" | `/contact-us`, `/contact` |
+| `/blog/` | Any URL with "/blog/" in path | `/blog/`, `/blog/my-post/` |
+| `/service-area$` | URL **ends with** /service-area (ignores trailing slash) | `/service-area/` ✓ — `/service-area/dallas/` ✗ |
+| `/locations$` | URL **ends with** /locations | `/locations/` ✓ — `/locations/houston/` ✗ |
+| `# comment` | Ignored | — |
 
-        with tab_sitemap:
-            if is_authenticated() and st.session_state.selected_property:
-                if st.button("Fetch sitemap URLs", key="fetch_sitemap"):
-                    with st.spinner("Fetching sitemaps…"):
-                        paths = fetch_sitemap_urls(
-                            st.session_state.selected_property)
-                    if paths:
-                        st.write(f"Found {len(paths)} sitemap(s):")
-                        st.write(paths)
-                    else:
-                        st.warning("No sitemaps found.")
-            else:
-                st.info("Connect to GSC in Section 1 first.")
+**Tip:** Click **Apply** after editing to immediately preview how many URLs are affected.
+The exclusion runs automatically on every analysis page.
+            """)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 4 — AI Model

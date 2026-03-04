@@ -15,6 +15,7 @@ from utils.gsc_handler import (  # noqa: E402
     detect_cannibalization,
     get_url_cannibalization_summary,
 )
+from utils.url_exclusions import should_exclude  # noqa: E402
 
 st.set_page_config(
     page_title="GSC Cannibalization — Duplicate Content Detector",
@@ -38,16 +39,19 @@ if not st.session_state.get(
 
 gsc_df: pd.DataFrame = st.session_state.gsc_data
 
-# Apply URL filter if set
-filter_urls = st.session_state.get("filter_urls", [])
-if filter_urls:
-    filtered = gsc_df[gsc_df["page"].isin(filter_urls)]
-    if len(filtered) > 0:
-        gsc_df = filtered
+# Apply URL exclusions
+exclude_patterns = st.session_state.get("exclude_patterns", [])
+if exclude_patterns:
+    mask = ~gsc_df["page"].apply(
+        lambda u: should_exclude(u, exclude_patterns))
+    n_before = gsc_df["page"].nunique()
+    gsc_df = gsc_df[mask]
+    n_after = gsc_df["page"].nunique()
+    if n_before - n_after:
         st.info(
-            f"URL filter applied: {
-                gsc_df['page'].nunique()} URLs, {
-                len(gsc_df):,} rows")
+            f"URL exclusions active: {n_before - n_after} URLs filtered out, "
+            f"{n_after} URLs remaining"
+        )
 
 # ─── Controls ────────────────────────────────────────────────────────────────
 

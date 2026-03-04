@@ -17,6 +17,7 @@ from utils.embeddings_handler import (  # noqa: E402
     THRESHOLD_MEDIUM,
     get_pairs_above_threshold,
 )
+from utils.url_exclusions import should_exclude  # noqa: E402
 
 st.set_page_config(
     page_title="Combined Risk — Duplicate Content Detector",
@@ -55,9 +56,10 @@ semantic_pairs_df = pd.DataFrame()
 if has_embeddings:
     url_df = st.session_state.url_df
     sim_matrix = st.session_state.sim_matrix
-    filter_urls = st.session_state.get("filter_urls", [])
-    if filter_urls:
-        mask = url_df["url"].isin(filter_urls)
+    exclude_patterns = st.session_state.get("exclude_patterns", [])
+    if exclude_patterns:
+        mask = ~url_df["url"].apply(
+            lambda u: should_exclude(u, exclude_patterns))
         url_df = url_df[mask].reset_index(drop=True)
         sim_matrix = sim_matrix[np.ix_(mask.values, mask.values)]
 
