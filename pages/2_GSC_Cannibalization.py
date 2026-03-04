@@ -15,7 +15,7 @@ from utils.gsc_handler import (  # noqa: E402
     detect_cannibalization,
     get_url_cannibalization_summary,
 )
-from utils.url_exclusions import should_exclude  # noqa: E402
+from utils.url_exclusions import is_homepage, should_exclude  # noqa: E402
 
 st.set_page_config(
     page_title="GSC Cannibalization — Duplicate Content Detector",
@@ -39,18 +39,43 @@ if not st.session_state.get(
 
 gsc_df: pd.DataFrame = st.session_state.gsc_data
 
-# Apply URL exclusions
+# ── URL exclusions (patterns + homepage) ─────────────────────────────────────
+_url_before = gsc_df["page"].nunique()
+
 exclude_patterns = st.session_state.get("exclude_patterns", [])
 if exclude_patterns:
     mask = ~gsc_df["page"].apply(
         lambda u: should_exclude(u, exclude_patterns))
-    n_before = gsc_df["page"].nunique()
     gsc_df = gsc_df[mask]
-    n_after = gsc_df["page"].nunique()
-    if n_before - n_after:
+
+if st.session_state.get("exclude_homepage", True):
+    _prop = st.session_state.get("selected_property", "")
+    if _prop:
+        gsc_df = gsc_df[
+            ~gsc_df["page"].apply(lambda u: is_homepage(u, _prop))
+        ]
+
+_url_after = gsc_df["page"].nunique()
+if _url_before - _url_after:
+    st.info(
+        f"URL exclusions active: "
+        f"{_url_before - _url_after} URLs filtered out, "
+        f"{_url_after} remaining"
+    )
+
+# ── Brand term filtering (query-level) ───────────────────────────────────────
+brand_terms = st.session_state.get("brand_terms", [])
+if brand_terms:
+    _brand_lower = [t.lower() for t in brand_terms]
+    _q_before = gsc_df["query"].nunique()
+    mask_brand = ~gsc_df["query"].apply(
+        lambda q: any(t in q.lower() for t in _brand_lower)
+    )
+    gsc_df = gsc_df[mask_brand]
+    _q_removed = _q_before - gsc_df["query"].nunique()
+    if _q_removed:
         st.info(
-            f"URL exclusions active: {n_before - n_after} URLs filtered out, "
-            f"{n_after} URLs remaining"
+            f"Brand filter: {_q_removed:,} branded queries removed"
         )
 
 # ─── Controls ────────────────────────────────────────────────────────────────

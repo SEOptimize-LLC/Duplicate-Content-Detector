@@ -51,6 +51,8 @@ defaults = {
     "combined_df": None, "clusters": None, "cluster_df": None,
     "url_risk_df": None,
     "exclude_patterns": list(DEFAULT_EXCLUDE_PATTERNS),
+    "exclude_homepage": True,
+    "brand_terms": [],
     "selected_model_id": AVAILABLE_MODELS[0]["id"],
     "selected_model_label": AVAILABLE_MODELS[0]["label"],
 }
@@ -498,6 +500,86 @@ with st.container(border=True):
 **Tip:** Click **Apply** after editing to immediately preview how many URLs are affected.
 The exclusion runs automatically on every analysis page.
             """)
+
+        st.divider()
+
+        # ── Homepage Exclusion ────────────────────────────────────────────
+        st.markdown("**🏠 Homepage Exclusion**")
+        st.caption(
+            "Always exclude the root URL of your property — "
+            "homepages don't compete with service or product pages."
+        )
+
+        hp_col, info_col = st.columns([1, 3])
+        with hp_col:
+            excl_hp = st.toggle(
+                "Exclude homepage",
+                value=st.session_state.exclude_homepage,
+                key="excl_homepage_toggle",
+            )
+            if excl_hp != st.session_state.exclude_homepage:
+                st.session_state.exclude_homepage = excl_hp
+                st.session_state.sim_matrix = None
+                st.rerun()
+
+        with info_col:
+            prop_url = st.session_state.get("selected_property", "")
+            if prop_url:
+                if prop_url.startswith("sc-domain:"):
+                    domain = prop_url.replace("sc-domain:", "").rstrip("/")
+                    hp_display = (
+                        f"https://{domain}/ "
+                        f"*(+ http / www variants)*"
+                    )
+                else:
+                    hp_display = f"`{prop_url.rstrip('/')+'/'}` "
+                status = "✅ Excluded" if excl_hp else "⚪ Not excluded"
+                st.markdown(f"{status} — {hp_display}")
+            else:
+                st.caption(
+                    "Connect to GSC in Section 1 to display your property URL."
+                )
+
+        st.divider()
+
+        # ── Branded Query Exclusion ───────────────────────────────────────
+        st.markdown("**🏷️ Branded Query Exclusion**")
+        st.caption(
+            "Branded queries create false cannibalization signals. "
+            "Queries containing any of these terms are excluded from "
+            "the GSC Cannibalization analysis (case-insensitive)."
+        )
+
+        brand_text = st.text_area(
+            "Brand names / terms (one per line)",
+            value="\n".join(st.session_state.brand_terms),
+            height=100,
+            placeholder=(
+                "samedayutah\n"
+                "same day utah\n"
+                "your brand name here"
+            ),
+            key="brand_terms_text",
+        )
+
+        if st.button("✅ Apply brand terms", key="apply_brand",
+                     type="primary"):
+            terms = [t.strip() for t in brand_text.splitlines()
+                     if t.strip()]
+            st.session_state.brand_terms = terms
+            st.success(
+                f"{len(terms)} brand term(s) saved." if terms
+                else "Brand terms cleared."
+            )
+            st.rerun()
+
+        if st.session_state.brand_terms:
+            st.caption(
+                "Active: "
+                + ", ".join(
+                    f"`{t}`" for t in st.session_state.brand_terms
+                )
+            )
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 4 — AI Model

@@ -128,6 +128,29 @@ def apply_exclusions(
     return kept, excluded
 
 
+def is_homepage(url: str, property_url: str) -> bool:
+    """
+    Return True if url is the homepage (root) of the given GSC property.
+
+    Handles both URL-prefix properties (https://example.com/) and
+    domain properties (sc-domain:example.com), including http/www variants.
+    Trailing slashes are ignored before comparing.
+    """
+    if not property_url or not url:
+        return False
+    url_norm = url.rstrip("/").lower()
+    if property_url.startswith("sc-domain:"):
+        domain = property_url.replace("sc-domain:", "").rstrip("/").lower()
+        return url_norm in {
+            f"https://{domain}",
+            f"http://{domain}",
+            f"https://www.{domain}",
+            f"http://www.{domain}",
+        }
+    else:
+        return url_norm == property_url.rstrip("/").lower()
+
+
 def patterns_from_text(text: str) -> list[str]:
     """Parse a newline-separated text block into a list of pattern strings."""
     return [line.strip() for line in text.splitlines() if line.strip()]

@@ -19,7 +19,7 @@ from utils.embeddings_handler import (  # noqa: E402
     get_pairs_above_threshold,
     get_summary_stats,
 )
-from utils.url_exclusions import should_exclude  # noqa: E402
+from utils.url_exclusions import is_homepage, should_exclude  # noqa: E402
 
 st.set_page_config(
     page_title="Semantic Similarity — Duplicate Content Detector",
@@ -42,20 +42,30 @@ if not st.session_state.get(
 url_df: pd.DataFrame = st.session_state.url_df
 embeddings: np.ndarray = st.session_state.embeddings_matrix
 
-# Apply URL exclusions
+# Apply URL exclusions (patterns + homepage)
+_n_start = len(url_df)
+
 exclude_patterns = st.session_state.get("exclude_patterns", [])
 if exclude_patterns:
     mask = ~url_df["url"].apply(
         lambda u: should_exclude(u, exclude_patterns))
-    n_before = len(url_df)
     url_df = url_df[mask].reset_index(drop=True)
     embeddings = embeddings[mask.values]
-    n_excluded = n_before - len(url_df)
-    if n_excluded:
-        st.info(
-            f"URL exclusions active: {n_excluded} URLs filtered out, "
-            f"{len(url_df)} remaining for analysis"
-        )
+
+if st.session_state.get("exclude_homepage", True):
+    _prop = st.session_state.get("selected_property", "")
+    if _prop:
+        mask_hp = ~url_df["url"].apply(
+            lambda u: is_homepage(u, _prop))
+        url_df = url_df[mask_hp].reset_index(drop=True)
+        embeddings = embeddings[mask_hp.values]
+
+_n_excluded = _n_start - len(url_df)
+if _n_excluded:
+    st.info(
+        f"Exclusions active: {_n_excluded} URLs filtered out "
+        f"({len(url_df)} remaining)"
+    )
 
 if len(url_df) < 2:
     st.error("Need at least 2 URLs to compute similarity. Adjust your URL filter.")
