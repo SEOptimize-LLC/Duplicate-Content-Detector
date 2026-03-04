@@ -67,12 +67,12 @@ st.caption(
 sf_ok = st.session_state.sf_loaded and st.session_state.url_df is not None
 gsc_ok = is_authenticated() and st.session_state.gsc_loaded
 try:
-    ai_ok = bool(
-        st.secrets.get(
-            "OPENROUTER_API_KEY",
-            "").strip().replace(
-            "sk-or-YOUR_OPENROUTER_API_KEY",
-            ""))
+    # Check top-level key first, then fallback to [gsc] section (common paste mistake)
+    _or_key = (
+        st.secrets.get("OPENROUTER_API_KEY", "")
+        or st.secrets.get("gsc", {}).get("OPENROUTER_API_KEY", "")
+    )
+    ai_ok = bool(_or_key.strip()) and "YOUR_OPENROUTER" not in _or_key
 except Exception:
     ai_ok = False
 
@@ -252,16 +252,18 @@ After approving access, it prints your `refresh_token`.
 
 **Step 4 — Add to Streamlit secrets**
 
-In Streamlit Cloud → your app → **Settings → Secrets**, add:
+In Streamlit Cloud → your app → **Settings → Secrets**, paste:
 
 ```toml
+OPENROUTER_API_KEY = "sk-or-XXXX"
+
 [gsc]
 client_id = "YOUR_CLIENT_ID.apps.googleusercontent.com"
 client_secret = "YOUR_CLIENT_SECRET"
 refresh_token = "1//0gXXXXXXXXXXXXXXXXXXXXXXXXX"
-
-OPENROUTER_API_KEY = "sk-or-XXXX"
 ```
+
+> ⚠️ `OPENROUTER_API_KEY` **must be above** `[gsc]` — keys below a section header belong to that section in TOML.
 
 Save → the app will reconnect automatically.
                 """)

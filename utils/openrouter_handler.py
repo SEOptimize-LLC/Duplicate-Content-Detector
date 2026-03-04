@@ -32,11 +32,15 @@ AVAILABLE_MODELS = [
 def get_client() -> Optional[OpenAI]:
     """Return an OpenAI client pointed at OpenRouter."""
     try:
-        api_key = st.secrets.get("OPENROUTER_API_KEY", "")
+        # Check top-level first, then [gsc] section (common paste mistake)
+        api_key = (
+            st.secrets.get("OPENROUTER_API_KEY", "")
+            or st.secrets.get("gsc", {}).get("OPENROUTER_API_KEY", "")
+        )
     except Exception:
         api_key = ""
 
-    if not api_key:
+    if not api_key or "YOUR_OPENROUTER" in api_key:
         return None
 
     return OpenAI(
@@ -57,11 +61,13 @@ def build_duplicate_prompt(
         clicks_a, clicks_b, impressions_a, impressions_b
     """
     prompt_lines = [
-        "You are an expert SEO consultant specializing in content strategy and technical SEO.",
+        "You are an expert SEO consultant specializing in content strategy"
+        " and technical SEO.",
         "",
-        "I need your help analyzing a group of web pages that have been flagged as "
-        "potential duplicates or cannibalizing content. Please analyze the data below and "
-        "provide specific, actionable recommendations.",
+        "I need your help analyzing a group of web pages that have been"
+        " flagged as potential duplicates or cannibalizing content."
+        " Please analyze the data below and provide specific, actionable"
+        " recommendations.",
         "",
         "## Flagged URL Groups",
         "",
@@ -75,25 +81,34 @@ def build_duplicate_prompt(
         sim = pair.get('similarity')
         if sim is not None:
             prompt_lines.append(
-                f"- **Semantic Similarity Score:** {sim:.2%} (cosine similarity)")
+                f"- **Semantic Similarity Score:** {sim:.2%}"
+                " (cosine similarity)"
+            )
 
         shared_queries = pair.get('gsc_shared_queries', [])
         if shared_queries:
             top_queries = shared_queries[:5]
-            prompt_lines.append(f"- **Shared GSC Queries ({len(shared_queries)} total):** "
-                                + ", ".join(f'"{q}"' for q in top_queries))
+            q_str = ", ".join(f'"{q}"' for q in top_queries)
+            prompt_lines.append(
+                f"- **Shared GSC Queries ({len(shared_queries)} total):**"
+                f" {q_str}"
+            )
 
         clicks_a = pair.get('clicks_a')
         clicks_b = pair.get('clicks_b')
         if clicks_a is not None and clicks_b is not None:
             prompt_lines.append(
-                f"- **GSC Clicks — URL A:** {clicks_a}, **URL B:** {clicks_b}")
+                f"- **GSC Clicks — URL A:** {clicks_a},"
+                f" **URL B:** {clicks_b}"
+            )
 
         impr_a = pair.get('impressions_a')
         impr_b = pair.get('impressions_b')
         if impr_a is not None and impr_b is not None:
             prompt_lines.append(
-                f"- **GSC Impressions — URL A:** {impr_a}, **URL B:** {impr_b}")
+                f"- **GSC Impressions — URL A:** {impr_a},"
+                f" **URL B:** {impr_b}"
+            )
 
         prompt_lines.append("")
 
@@ -107,7 +122,8 @@ def build_duplicate_prompt(
     prompt_lines += [
         "## Your Analysis Should Cover:",
         "",
-        "1. **Root Cause** — Why are these pages likely duplicating or cannibalizing each other?",
+        "1. **Root Cause** — Why are these pages likely duplicating or"
+        " cannibalizing each other?",
         "2. **Recommended Action** — Choose one:",
         "   - Consolidate (merge content into one URL)",
         "   - Canonicalize (set canonical tag pointing to the preferred URL)",
@@ -115,10 +131,12 @@ def build_duplicate_prompt(
         "   - Differentiate (make the pages clearly distinct in topic/intent)",
         "   - No action needed (explain why these are actually fine)",
         "3. **Which URL to Keep** (if consolidating/redirecting) — and why",
-        "4. **Content Differentiation Suggestions** (if keeping both) — specific angles to make each page unique",
+        "4. **Content Differentiation Suggestions** (if keeping both)"
+        " — specific angles to make each page unique",
         "5. **Priority Level** — Critical / High / Medium / Low",
         "",
-        "Be specific and data-driven. Reference the similarity scores and GSC metrics in your reasoning.",
+        "Be specific and data-driven. Reference the similarity scores and"
+        " GSC metrics in your reasoning.",
         "Format your response in clear markdown with headers.",
     ]
 
@@ -136,7 +154,10 @@ def stream_recommendation(
     """
     client = get_client()
     if client is None:
-        yield "**Error:** OpenRouter API key not configured. Add `OPENROUTER_API_KEY` to your Streamlit secrets."
+        yield (
+            "**Error:** OpenRouter API key not configured."
+            " Add `OPENROUTER_API_KEY` to your Streamlit secrets."
+        )
         return
 
     prompt = build_duplicate_prompt(url_pairs, additional_context)

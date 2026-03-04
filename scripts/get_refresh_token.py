@@ -13,6 +13,11 @@ The script will:
 
 The refresh_token does not expire unless you explicitly revoke it.
 You only need to run this script once.
+
+IMPORTANT — credential type:
+  Use "Desktop App" in Google Cloud Console (not "Web application").
+  If you used "Web application", add http://localhost:8085/ to its
+  Authorized Redirect URIs in Google Cloud → APIs & Services → Credentials.
 """
 
 import os
@@ -20,6 +25,7 @@ import os
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
+REDIRECT_PORT = 8085
 
 
 def main():
@@ -29,7 +35,11 @@ def main():
     print()
     print("You need your OAuth 2.0 Client ID and Client Secret from")
     print("Google Cloud Console (APIs & Services → Credentials).")
-    print("Create a 'Desktop App' credential type if you haven't yet.")
+    print()
+    print("Credential type should be: Desktop App")
+    print("If you used 'Web application', add this redirect URI in")
+    print("Google Cloud Console → Authorized Redirect URIs:")
+    print(f"  http://localhost:{REDIRECT_PORT}/")
     print()
 
     # Read from env vars first, fall back to interactive prompt
@@ -52,7 +62,7 @@ def main():
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "redirect_uris": [
-                "urn:ietf:wg:oauth:2.0:oob",
+                f"http://localhost:{REDIRECT_PORT}/",
                 "http://localhost",
             ],
         }
@@ -64,23 +74,26 @@ def main():
     print()
 
     flow = InstalledAppFlow.from_client_config(client_config, scopes=SCOPES)
-    creds = flow.run_local_server(port=0)
+    creds = flow.run_local_server(port=REDIRECT_PORT)
 
     print()
     print("=" * 60)
-    print("  SUCCESS!  Copy the block below into Streamlit Secrets")
+    print("  SUCCESS!  Paste the block below into Streamlit Secrets")
     print("=" * 60)
+    print()
+    print("Go to: Streamlit Cloud → your app → Settings → Secrets")
+    print("Replace everything with the block below (fill in your OpenRouter key):")
+    print()
+    print("─" * 60)
+    print('OPENROUTER_API_KEY = "sk-or-YOUR_OPENROUTER_KEY"')
     print()
     print("[gsc]")
     print(f'client_id = "{client_id}"')
     print(f'client_secret = "{client_secret}"')
     print(f'refresh_token = "{creds.refresh_token}"')
+    print("─" * 60)
     print()
-    print("In Streamlit Cloud: your app → Settings → Secrets")
-    print("Paste the block above, then also add your OpenRouter key:")
-    print()
-    print('OPENROUTER_API_KEY = "sk-or-YOUR_KEY"')
-    print()
+    print("NOTE: OPENROUTER_API_KEY must be ABOVE [gsc] in the secrets.")
     print("=" * 60)
 
 
