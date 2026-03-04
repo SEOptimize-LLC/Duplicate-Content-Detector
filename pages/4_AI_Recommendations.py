@@ -122,10 +122,13 @@ selected_pairs: list[dict] = []
 if pair_source == "Combined Risk Dashboard" and has_combined:
     combined_df: pd.DataFrame = st.session_state.combined_df
 
+    _available_levels = combined_df["alert_level"].unique().tolist()
+    _preferred = ["Critical", "High — Semantic", "High — GSC"]
+    _default_levels = [l for l in _preferred if l in _available_levels] or _available_levels
     alert_filter = st.multiselect(
         "Filter by alert level",
-        options=combined_df["alert_level"].unique().tolist(),
-        default=["Critical", "High — Semantic", "High — GSC"],
+        options=_available_levels,
+        default=_default_levels,
         key="ai_alert_filter",
     )
     filtered_df = combined_df[combined_df["alert_level"].isin(
