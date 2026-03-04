@@ -39,35 +39,8 @@ if not st.session_state.get(
         "No embeddings loaded. Please go to **Data Input** and upload your Screaming Frog embeddings CSV.")
     st.stop()
 
-url_df: pd.DataFrame = st.session_state.url_df
-embeddings: np.ndarray = st.session_state.embeddings_matrix
-
-# Apply URL exclusions (patterns + homepage)
-_n_start = len(url_df)
-
-exclude_patterns = st.session_state.get("exclude_patterns", [])
-if exclude_patterns:
-    mask = ~url_df["url"].apply(
-        lambda u: should_exclude(u, exclude_patterns))
-    url_df = url_df[mask].reset_index(drop=True)
-    embeddings = embeddings[mask.values]
-
-_prop = st.session_state.get("selected_property") or ""
-if st.session_state.get("exclude_homepage", True) and _prop:
-    mask_hp = ~url_df["url"].apply(lambda u: is_homepage(u, _prop))
-    url_df = url_df[mask_hp].reset_index(drop=True)
-    embeddings = embeddings[mask_hp.values]
-
-_n_excluded = _n_start - len(url_df)
-if _n_excluded:
-    st.info(
-        f"Exclusions active: {_n_excluded} URLs filtered out "
-        f"({len(url_df)} remaining)"
-    )
-
-if len(url_df) < 2:
-    st.error("Need at least 2 URLs to compute similarity. Adjust your URL filter.")
-    st.stop()
+url_df_orig: pd.DataFrame = st.session_state.url_df
+embeddings_orig: np.ndarray = st.session_state.embeddings_matrix
 
 # ─── Controls ────────────────────────────────────────────────────────────────
 
@@ -90,18 +63,49 @@ max_pairs_display = st.sidebar.number_input(
     step=50,
 )
 
-# ─── Compute similarity matrix (cached in session state) ─────────────────────
+# ─── Compute similarity matrix from ORIGINAL data (cached) ───────────────────
+# Must use original (pre-exclusion) count as cache key so Combined Risk page
+# can safely slice the same matrix with its own exclusion mask.
 
 if (
     "sim_matrix" not in st.session_state
-    or st.session_state.get("sim_matrix_url_count") != len(url_df)
+    or st.session_state.get("sim_matrix_url_count") != len(url_df_orig)
 ):
-    with st.spinner(f"Computing pairwise similarity for {len(url_df)} URLs..."):
-        sim_matrix = compute_similarity_matrix(embeddings)
-        st.session_state.sim_matrix = sim_matrix
-        st.session_state.sim_matrix_url_count = len(url_df)
+    with st.spinner(f"Computing pairwise similarity for {len(url_df_orig)} URLs..."):
+        sim_matrix_full = compute_similarity_matrix(embeddings_orig)
+        st.session_state.sim_matrix = sim_matrix_full
+        st.session_state.sim_matrix_url_count = len(url_df_orig)
 else:
-    sim_matrix = st.session_state.sim_matrix
+    sim_matrix_full = st.session_state.sim_matrix
+
+# ─── Build combined exclusion mask over the original url_df ──────────────────
+
+keep = np.ones(len(url_df_orig), dtype=bool)
+
+exclude_patterns = st.session_state.get("exclude_patterns", [])
+if exclude_patterns:
+    keep &= ~url_df_orig["url"].apply(
+        lambda u: should_exclude(u, exclude_patterns)).values
+
+_prop = st.session_state.get("selected_property") or ""
+if st.session_state.get("exclude_homepage", True) and _prop:
+    keep &= ~url_df_orig["url"].apply(
+        lambda u: is_homepage(u, _prop)).values
+
+# Apply mask once to both url_df and sim_matrix
+url_df = url_df_orig[keep].reset_index(drop=True)
+sim_matrix = sim_matrix_full[np.ix_(keep, keep)]
+
+_n_excluded = len(url_df_orig) - len(url_df)
+if _n_excluded:
+    st.info(
+        f"Exclusions active: {_n_excluded} URLs filtered out "
+        f"({len(url_df)} remaining)"
+    )
+
+if len(url_df) < 2:
+    st.error("Need at least 2 URLs to compute similarity. Adjust your URL filter.")
+    st.stop()
 
 # ─── Summary metrics ─────────────────────────────────────────────────────────
 

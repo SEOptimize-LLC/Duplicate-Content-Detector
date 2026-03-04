@@ -54,24 +54,36 @@ if not has_gsc:
 # --- Semantic pairs ---
 semantic_pairs_df = pd.DataFrame()
 if has_embeddings:
-    url_df = st.session_state.url_df
-    sim_matrix = st.session_state.sim_matrix
-    exclude_patterns = st.session_state.get("exclude_patterns", [])
-    if exclude_patterns:
-        mask = ~url_df["url"].apply(
-            lambda u: should_exclude(u, exclude_patterns))
-        url_df = url_df[mask].reset_index(drop=True)
-        sim_matrix = sim_matrix[np.ix_(mask.values, mask.values)]
+    url_df_orig = st.session_state.url_df
+    sim_matrix_full = st.session_state.sim_matrix
 
-    _prop = st.session_state.get("selected_property") or ""
-    if st.session_state.get("exclude_homepage", True) and _prop:
-        mask_hp = ~url_df["url"].apply(lambda u: is_homepage(u, _prop))
-        url_df = url_df[mask_hp].reset_index(drop=True)
-        sim_matrix = sim_matrix[np.ix_(mask_hp.values, mask_hp.values)]
+    # Safety check: sim_matrix must match the original url_df
+    if sim_matrix_full.shape[0] != len(url_df_orig):
+        st.warning(
+            "Similarity matrix size mismatch — please visit the "
+            "**Semantic Similarity** page first to recompute it."
+        )
+        has_embeddings = False
+    else:
+        # Build combined exclusion mask over ORIGINAL url_df
+        keep = np.ones(len(url_df_orig), dtype=bool)
+        exclude_patterns = st.session_state.get("exclude_patterns", [])
+        if exclude_patterns:
+            keep &= ~url_df_orig["url"].apply(
+                lambda u: should_exclude(u, exclude_patterns)).values
 
-    semantic_pairs_df = get_pairs_above_threshold(
-        url_df, sim_matrix, threshold=THRESHOLD_MEDIUM, max_pairs=10000
-    )
+        _prop = st.session_state.get("selected_property") or ""
+        if st.session_state.get("exclude_homepage", True) and _prop:
+            keep &= ~url_df_orig["url"].apply(
+                lambda u: is_homepage(u, _prop)).values
+
+        # Apply mask once to both
+        url_df = url_df_orig[keep].reset_index(drop=True)
+        sim_matrix = sim_matrix_full[np.ix_(keep, keep)]
+
+        semantic_pairs_df = get_pairs_above_threshold(
+            url_df, sim_matrix, threshold=THRESHOLD_MEDIUM, max_pairs=10000
+        )
 
 # --- GSC cannibalization data ---
 cannibal_findings = []
