@@ -1,10 +1,15 @@
 """
 Embeddings Handler — Screaming Frog CSV parser + cosine similarity computation.
 
-Expected SF export format:
-  - One column containing the URL (auto-detected by name: 'Address', 'URL', 'url', etc.)
-  - Remaining numeric columns = embedding vector dimensions
-  - Example: Address, dim_0, dim_1, ..., dim_383  (384-dim all-MiniLM-L6-v2)
+Supports two CSV formats:
+
+  Format A — Wide (standard SF embeddings export):
+    Address, dim_0, dim_1, ..., dim_383
+    One numeric column per embedding dimension.
+
+  Format B — Packed (custom JS extraction, e.g. ChatGPT embeddings):
+    Address, Status Code, "(ChatGPT) Extract embeddings from page content 1"
+    Embedding values are a comma-separated string inside a single cell.
 
 All pairwise cosine similarity is computed with sklearn for efficiency.
 """
@@ -44,26 +49,66 @@ def detect_url_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
+# Metadata column names to skip when looking for embedding dimensions
+_METADATA_COLS = {
+    "status code", "status", "indexability", "indexability status",
+    "title 1", "meta description 1", "h1-1", "h1-2", "h2-1", "h2-2",
+    "word count", "crawl depth", "inlinks", "unique inlinks",
+    "outlinks", "unique outlinks", "content type", "response time",
+}
+
+
+def _parse_packed_embeddings(
+        series: pd.Series) -> Optional[np.ndarray]:
+    """
+    Try to parse a Series of comma-separated float strings (Format B).
+    Returns a 2D float32 numpy array, or None if the column doesn't match.
+    """
+    try:
+        sample = series.dropna().iloc[0] if not series.dropna().empty else ""
+        if not isinstance(sample, str):
+            return None
+        parts = [p.strip() for p in sample.split(",")]
+        if len(parts) < 10:
+            return None
+        # Validate first 20 values are floats
+        [float(p) for p in parts[:20]]
+        # Parse all rows
+        matrix = np.array(
+            [[float(v) for v in str(row).split(",")]
+             for row in series],
+            dtype=np.float32,
+        )
+        return matrix
+    except (ValueError, AttributeError, IndexError):
+        return None
+
+
 def parse_sf_embeddings(
         file_obj) -> tuple[Optional[pd.DataFrame], Optional[np.ndarray], str]:
     """
-    Parse a Screaming Frog embeddings CSV file.
+    Parse a Screaming Frog embeddings CSV (Format A wide or Format B packed).
 
     Returns:
         (url_df, embeddings_matrix, error_message)
-        - url_df: DataFrame with columns ['url'] + any metadata columns
+        - url_df: DataFrame with column 'url'
         - embeddings_matrix: numpy array of shape (n_urls, n_dims)
         - error_message: empty string on success, description on failure
     """
     try:
-        # Read CSV — handle UTF-8 and Latin-1 encodings
-        try:
-            df = pd.read_csv(file_obj, encoding="utf-8", low_memory=False)
-        except UnicodeDecodeError:
-            file_obj.seek(0)
-            df = pd.read_csv(file_obj, encoding="latin-1", low_memory=False)
+        # Detect file type by name if available, else try CSV then Excel
+        fname = getattr(file_obj, "name", "")
+        if fname.lower().endswith((".xlsx", ".xls")):
+            df = pd.read_excel(file_obj)
+        else:
+            try:
+                df = pd.read_csv(file_obj, encoding="utf-8", low_memory=False)
+            except UnicodeDecodeError:
+                file_obj.seek(0)
+                df = pd.read_csv(
+                    file_obj, encoding="latin-1", low_memory=False)
     except Exception as e:
-        return None, None, f"Failed to read CSV: {e}"
+        return None, None, f"Failed to read file: {e}"
 
     if df.empty:
         return None, None, "The uploaded file is empty."
@@ -76,37 +121,60 @@ def parse_sf_embeddings(
             + ", ".join(URL_COLUMN_CANDIDATES)
         )
 
-    # Identify numeric embedding columns (all numeric columns except URL)
-    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-    embedding_cols = [c for c in numeric_cols]  # all numeric = embedding dims
+    # ── Format A: wide (one numeric col per embedding dimension) ────────
+    non_url_cols = [c for c in df.columns if c != url_col]
+    numeric_cols = df[non_url_cols].select_dtypes(
+        include=[np.number]).columns.tolist()
+    # Exclude obvious metadata columns
+    embedding_cols = [
+        c for c in numeric_cols
+        if c.strip().lower() not in _METADATA_COLS
+    ]
 
-    if len(embedding_cols) < 10:
-        return None, None, (
-            f"Only {len(embedding_cols)} numeric columns found. "
-            "Expected at least 10 embedding dimensions. "
-            "Ensure you exported the embeddings (not just metadata) from Screaming Frog."
-        )
+    if len(embedding_cols) >= 10:
+        df_clean = df[[url_col] + embedding_cols].dropna()
+        df_clean = df_clean.rename(columns={url_col: "url"})
+        df_clean["url"] = df_clean["url"].str.strip()
+        df_clean = df_clean[df_clean["url"].str.startswith("http")]
+        if len(df_clean) >= 2:
+            embeddings = df_clean[embedding_cols].values.astype(np.float32)
+            embeddings = _normalize(embeddings)
+            return df_clean[["url"]].reset_index(drop=True), embeddings, ""
 
-    # Drop rows with missing URL or NaN in embeddings
-    df_clean = df[[url_col] + embedding_cols].dropna()
-    df_clean = df_clean.rename(columns={url_col: "url"})
-    df_clean["url"] = df_clean["url"].str.strip()
-    df_clean = df_clean[df_clean["url"].str.startswith(
-        "http")]  # sanity filter
+    # ── Format B: packed (comma-separated floats in a single text col) ──
+    object_cols = [
+        c for c in non_url_cols
+        if c.strip().lower() not in _METADATA_COLS
+        and df[c].dtype == object
+    ]
+    for col in object_cols:
+        # Only try rows where the URL is valid
+        url_mask = df[url_col].astype(str).str.startswith("http")
+        sub = df[url_mask][[url_col, col]].dropna()
+        matrix = _parse_packed_embeddings(sub[col])
+        if matrix is not None and matrix.shape[0] >= 2:
+            url_df = sub[[url_col]].rename(
+                columns={url_col: "url"}).reset_index(drop=True)
+            url_df["url"] = url_df["url"].str.strip()
+            embeddings = _normalize(matrix)
+            return url_df, embeddings, ""
 
-    if len(df_clean) < 2:
-        return None, None, "Need at least 2 valid URLs with embeddings to run analysis."
+    # ── Neither format matched ───────────────────────────────────────────
+    n_num = len(embedding_cols)
+    return None, None, (
+        f"Could not parse embeddings. Found {n_num} numeric column(s) and "
+        "no packed-embedding text columns. "
+        "Supported formats: (A) one numeric column per dimension, or "
+        "(B) a single text column with comma-separated float values. "
+        "Check that your export includes the embedding data."
+    )
 
-    # Extract matrix
-    embeddings = df_clean[embedding_cols].values.astype(np.float32)
 
-    # L2-normalize rows so cosine sim = dot product (speeds up computation)
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-    norms[norms == 0] = 1  # avoid division by zero
-    embeddings = embeddings / norms
-
-    url_df = df_clean[["url"]].reset_index(drop=True)
-    return url_df, embeddings, ""
+def _normalize(matrix: np.ndarray) -> np.ndarray:
+    """L2-normalize rows so cosine similarity = dot product."""
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1
+    return (matrix / norms).astype(np.float32)
 
 
 def compute_similarity_matrix(embeddings: np.ndarray) -> np.ndarray:

@@ -366,8 +366,8 @@ with st.container(border=True):
                 st.rerun()
         else:
             uploaded = st.file_uploader(
-                "Upload Screaming Frog embeddings CSV",
-                type=["csv"],
+                "Upload Screaming Frog embeddings (CSV or Excel)",
+                type=["csv", "xlsx", "xls"],
                 key="sf_upload",
                 help="Bulk Export → Content → Embeddings in Screaming Frog v20+",
             )
