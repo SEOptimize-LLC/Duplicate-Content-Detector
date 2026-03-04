@@ -134,6 +134,8 @@ def build_duplicate_prompt(
         "",
         "**Pair N — [Short descriptive title, e.g., 'Service hub vs."
         " individual service page']**",
+        "- **URL A:** (paste the exact URL A from the input data)",
+        "- **URL B:** (paste the exact URL B from the input data)",
         "- **Priority:** 🔴 Critical / 🟠 High / 🟡 Medium / 🔵 Low",
         "- **Recommended Action:** Consolidate / Canonicalize /"
         " Redirect (301) / Differentiate / No Action Needed",
