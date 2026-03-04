@@ -10,7 +10,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import date, timedelta
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 
 import sys
 import os
@@ -18,8 +18,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.embeddings_handler import parse_sf_embeddings, get_summary_stats
 from utils.gsc_handler import (
-    build_auth_url,
-    handle_oauth_callback,
     init_from_stored_refresh_token,
     is_authenticated,
     fetch_properties,
@@ -37,43 +35,7 @@ st.set_page_config(
 st.title("📥 Data Input")
 st.caption("Load your data sources before running analysis on the other pages.")
 
-# ─── Helper: get redirect URI ────────────────────────────────────────────────
-
-def get_redirect_uri() -> str:
-    """Build the redirect URI based on the current app URL."""
-    try:
-        # On Streamlit Cloud the URL is in query_params / request headers
-        # We construct it from the current page URL via JS workaround
-        # Fall back to localhost for local dev
-        query_params = st.query_params
-        if "redirect_uri" in query_params:
-            return query_params["redirect_uri"]
-    except Exception:
-        pass
-    return "http://localhost:8501/Data_Input"
-
-
-# ─── Handle OAuth callback (code in URL) ─────────────────────────────────────
-
-def handle_callback():
-    params = st.query_params
-    code = params.get("code", "")
-    if code and not is_authenticated():
-        redirect_uri = get_redirect_uri()
-        success = handle_oauth_callback(code, redirect_uri)
-        if success:
-            # Clear code from URL
-            st.query_params.clear()
-            st.success("Successfully connected to Google Search Console!")
-            st.rerun()
-        else:
-            st.error("OAuth exchange failed. Please try connecting again.")
-            st.query_params.clear()
-
-
-handle_callback()
-
-# ─── Try auto-login from stored refresh token ────────────────────────────────
+# ─── Auto-login from stored refresh token (runs silently on every page load) ─
 
 if not is_authenticated():
     init_from_stored_refresh_token()
@@ -156,40 +118,36 @@ elif st.session_state.get("sf_loaded"):
 st.header("B — Google Search Console", divider="green")
 
 if not is_authenticated():
-    col_info, col_btn = st.columns([3, 1])
-    with col_info:
-        st.info(
-            "Connect your Google account to pull query/URL performance data for "
-            "keyword cannibalization analysis."
-        )
-
-    # Check if client credentials are configured
+    # Check which secrets are present to give a precise error message
     try:
-        has_creds = bool(st.secrets.get("gsc", {}).get("client_id", ""))
+        gsc_secrets = st.secrets.get("gsc", {})
+        has_client_id = bool(gsc_secrets.get("client_id", "").strip().replace("YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com", ""))
+        has_client_secret = bool(gsc_secrets.get("client_secret", "").strip().replace("YOUR_GOOGLE_OAUTH_CLIENT_SECRET", ""))
+        has_refresh_token = bool(gsc_secrets.get("refresh_token", "").strip().replace("YOUR_REFRESH_TOKEN", ""))
     except Exception:
-        has_creds = False
+        has_client_id = has_client_secret = has_refresh_token = False
 
-    if has_creds:
-        redirect_uri = get_redirect_uri()
-        auth_url = build_auth_url(redirect_uri)
-
-        with col_btn:
-            st.markdown(
-                f'<a href="{auth_url}" target="_self">'
-                f'<button style="background:#4285F4;color:white;border:none;padding:10px 20px;'
-                f'border-radius:6px;cursor:pointer;font-size:14px;">🔐 Connect to GSC</button>'
-                f"</a>",
-                unsafe_allow_html=True,
-            )
-        st.caption(
-            "You'll be redirected to Google for authentication. "
-            "Only read-only Search Console access is requested."
+    if not has_client_id or not has_client_secret:
+        st.warning(
+            "**GSC credentials not configured.** "
+            "Add your `client_id` and `client_secret` to Streamlit secrets under `[gsc]`. "
+            "See the README for Google Cloud setup instructions."
+        )
+    elif not has_refresh_token:
+        st.error(
+            "**Refresh token missing.** Your `client_id` and `client_secret` are set, "
+            "but `refresh_token` is empty. \n\n"
+            "**To get your refresh token:**\n"
+            "1. Run locally: `python scripts/get_refresh_token.py`\n"
+            "2. A browser opens → sign in with your Google account\n"
+            "3. Copy the printed `refresh_token` value\n"
+            "4. Add it to your Streamlit secrets as `gsc.refresh_token`\n\n"
+            "No redirect URI configuration is needed — the script handles everything locally."
         )
     else:
-        st.warning(
-            "GSC credentials not configured. Add `gsc.client_id`, `gsc.client_secret`, "
-            "and optionally `gsc.refresh_token` to your `.streamlit/secrets.toml`. "
-            "See README.md for setup instructions."
+        st.error(
+            "Authentication failed. Your `refresh_token` may be invalid or revoked. "
+            "Run `scripts/get_refresh_token.py` again to get a fresh token."
         )
 
 else:
