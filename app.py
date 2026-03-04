@@ -5,6 +5,7 @@ This IS the first page users see. All data sources are configured here.
 
 import os
 import sys
+import calendar
 from datetime import date, timedelta
 
 import pandas as pd
@@ -135,25 +136,87 @@ with st.container(border=True):
                 if st.session_state.selected_property in props:
                     prop_idx = props.index(st.session_state.selected_property)
 
-                pc, dc1, dc2 = st.columns([3, 1, 1])
-                with pc:
-                    sel = st.selectbox(
-                        "GSC Property", props, index=prop_idx, key="prop_sel")
-                    st.session_state.selected_property = sel
-                with dc1:
-                    start_d = st.date_input(
-                        "Start date",
-                        value=date.today() - timedelta(days=90),
-                        max_value=date.today() - timedelta(days=2),
-                        key="gsc_start",
+                # Property selector
+                sel = st.selectbox(
+                    "GSC Property", props, index=prop_idx, key="prop_sel")
+                st.session_state.selected_property = sel
+
+                # ── Date range ───────────────────────────────────────────
+                _PRESETS = [
+                    "Last 30 days", "Last 60 days", "Last 90 days",
+                    "Last 180 days", "Last 360 days",
+                    "Calendar month", "Custom range",
+                ]
+                _PRESET_DAYS = {
+                    "Last 30 days": 30, "Last 60 days": 60,
+                    "Last 90 days": 90, "Last 180 days": 180,
+                    "Last 360 days": 360,
+                }
+                _MONTH_NAMES = [
+                    "January", "February", "March", "April", "May", "June",
+                    "July", "August", "September", "October", "November",
+                    "December",
+                ]
+
+                date_mode = st.selectbox(
+                    "Date range",
+                    options=_PRESETS,
+                    index=2,  # default: Last 90 days
+                    key="date_mode",
+                )
+
+                _today = date.today()
+                _max_d = _today - timedelta(days=2)  # GSC lags ~2 days
+
+                if date_mode in _PRESET_DAYS:
+                    start_d = _today - timedelta(days=_PRESET_DAYS[date_mode])
+                    end_d = _max_d
+                    st.caption(
+                        f"{start_d.strftime('%b %d, %Y')}"
+                        f" → {end_d.strftime('%b %d, %Y')}"
                     )
-                with dc2:
-                    end_d = st.date_input(
-                        "End date",
-                        value=date.today() - timedelta(days=2),
-                        max_value=date.today() - timedelta(days=2),
-                        key="gsc_end",
+
+                elif date_mode == "Calendar month":
+                    _prev = (_today.replace(day=1) - timedelta(days=1))
+                    mc1, mc2 = st.columns(2)
+                    with mc1:
+                        month_name = st.selectbox(
+                            "Month", _MONTH_NAMES,
+                            index=_prev.month - 1,
+                            key="cal_month",
+                        )
+                    with mc2:
+                        _years = list(range(_today.year - 3, _today.year + 1))
+                        cal_year = st.selectbox(
+                            "Year", _years,
+                            index=_years.index(_prev.year),
+                            key="cal_year",
+                        )
+                    _mnum = _MONTH_NAMES.index(month_name) + 1
+                    _, _last = calendar.monthrange(cal_year, _mnum)
+                    start_d = date(cal_year, _mnum, 1)
+                    end_d = min(date(cal_year, _mnum, _last), _max_d)
+                    st.caption(
+                        f"{start_d.strftime('%b %d, %Y')}"
+                        f" → {end_d.strftime('%b %d, %Y')}"
                     )
+
+                else:  # Custom range
+                    cc1, cc2 = st.columns(2)
+                    with cc1:
+                        start_d = st.date_input(
+                            "Start date",
+                            value=_today - timedelta(days=90),
+                            max_value=_max_d,
+                            key="gsc_start",
+                        )
+                    with cc2:
+                        end_d = st.date_input(
+                            "End date",
+                            value=_max_d,
+                            max_value=_max_d,
+                            key="gsc_end",
+                        )
 
                 if st.button(
                     "⬇️  Fetch GSC Data",
