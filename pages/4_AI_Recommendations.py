@@ -56,6 +56,7 @@ if not has_api_key:
 
 has_combined = (
     "combined_df" in st.session_state
+    and st.session_state.combined_df is not None
     and not st.session_state.combined_df.empty
 )
 has_semantic = (
