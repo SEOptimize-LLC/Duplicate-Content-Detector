@@ -48,12 +48,20 @@ if exclude_patterns:
         lambda u: should_exclude(u, exclude_patterns))
     gsc_df = gsc_df[mask]
 
-if st.session_state.get("exclude_homepage", True):
-    _prop = st.session_state.get("selected_property", "")
-    if _prop:
-        gsc_df = gsc_df[
-            ~gsc_df["page"].apply(lambda u: is_homepage(u, _prop))
-        ]
+_prop = st.session_state.get("selected_property") or ""
+_exclude_hp = st.session_state.get("exclude_homepage", True)
+if _exclude_hp and _prop:
+    _before_hp = gsc_df["page"].nunique()
+    gsc_df = gsc_df[
+        ~gsc_df["page"].apply(lambda u: is_homepage(u, _prop))
+    ]
+    _removed_hp = _before_hp - gsc_df["page"].nunique()
+    if _removed_hp == 0:
+        st.warning(
+            f"⚠️ Homepage exclusion active but 0 URLs matched. "
+            f"Property in session: `{_prop}`. "
+            f"Sample page URLs: {gsc_df['page'].head(3).tolist()}"
+        )
 
 _url_after = gsc_df["page"].nunique()
 if _url_before - _url_after:
@@ -118,6 +126,13 @@ with st.spinner("Detecting cannibalization..."):
         min_impressions=int(min_impressions),
         min_clicks=int(min_clicks),
     )
+
+# Safety net: strip homepage from findings even if it slipped past row filter
+if st.session_state.get("exclude_homepage", True) and _prop:
+    findings = [
+        f for f in findings
+        if not any(is_homepage(u, _prop) for u in f["urls"])
+    ]
 
 # Store for combined risk page
 st.session_state.cannibalization_findings = findings

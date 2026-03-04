@@ -52,13 +52,11 @@ if exclude_patterns:
     url_df = url_df[mask].reset_index(drop=True)
     embeddings = embeddings[mask.values]
 
-if st.session_state.get("exclude_homepage", True):
-    _prop = st.session_state.get("selected_property", "")
-    if _prop:
-        mask_hp = ~url_df["url"].apply(
-            lambda u: is_homepage(u, _prop))
-        url_df = url_df[mask_hp].reset_index(drop=True)
-        embeddings = embeddings[mask_hp.values]
+_prop = st.session_state.get("selected_property") or ""
+if st.session_state.get("exclude_homepage", True) and _prop:
+    mask_hp = ~url_df["url"].apply(lambda u: is_homepage(u, _prop))
+    url_df = url_df[mask_hp].reset_index(drop=True)
+    embeddings = embeddings[mask_hp.values]
 
 _n_excluded = _n_start - len(url_df)
 if _n_excluded:

@@ -60,6 +60,23 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
+# ─── Migrate stale exclusion patterns ───────────────────────────────────
+# Replace outdated pattern strings — runs on every load, safe to repeat.
+import re as _re
+_migrations = {"/blog/": "/blog$"}
+
+# 1. Patch the patterns list
+st.session_state.exclude_patterns = [
+    _migrations.get(p, p) for p in st.session_state.exclude_patterns
+]
+
+# 2. Patch the textarea widget state directly (handles stale browser cache)
+if "excl_patterns_text" in st.session_state:
+    _t = st.session_state["excl_patterns_text"]
+    for _old, _new in _migrations.items():
+        _t = _re.sub(r"(?m)^" + _re.escape(_old) + r"$", _new, _t)
+    st.session_state["excl_patterns_text"] = _t
+
 # ─── Auto-authenticate from stored refresh token ────────────────────────
 
 if not is_authenticated():
@@ -492,9 +509,10 @@ with st.container(border=True):
 |---------|-----------|---------------|
 | `ppc` | Any URL containing "ppc" | `/ppc-landing`, `/google-ppc/` |
 | `/contact` | Any URL containing "/contact" | `/contact-us`, `/contact` |
-| `/blog/` | Any URL with "/blog/" in path | `/blog/`, `/blog/my-post/` |
+| `/blog$` | URL **ends with** /blog (index only — keeps blog posts) | `/blog/` ✓ — `/blog/my-post/` ✗ |
 | `/service-area$` | URL **ends with** /service-area (ignores trailing slash) | `/service-area/` ✓ — `/service-area/dallas/` ✗ |
 | `/locations$` | URL **ends with** /locations | `/locations/` ✓ — `/locations/houston/` ✗ |
+| `regex:/page/\d+` | Regex match — any pagination URL in any subfolder | `/blog/page/2/`, `/testimonials/page/3/` |
 | `# comment` | Ignored | — |
 
 **Tip:** Click **Apply** after editing to immediately preview how many URLs are affected.

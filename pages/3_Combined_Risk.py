@@ -63,14 +63,11 @@ if has_embeddings:
         url_df = url_df[mask].reset_index(drop=True)
         sim_matrix = sim_matrix[np.ix_(mask.values, mask.values)]
 
-    if st.session_state.get("exclude_homepage", True):
-        _prop = st.session_state.get("selected_property", "")
-        if _prop:
-            mask_hp = ~url_df["url"].apply(
-                lambda u: is_homepage(u, _prop))
-            url_df = url_df[mask_hp].reset_index(drop=True)
-            sim_matrix = sim_matrix[
-                np.ix_(mask_hp.values, mask_hp.values)]
+    _prop = st.session_state.get("selected_property") or ""
+    if st.session_state.get("exclude_homepage", True) and _prop:
+        mask_hp = ~url_df["url"].apply(lambda u: is_homepage(u, _prop))
+        url_df = url_df[mask_hp].reset_index(drop=True)
+        sim_matrix = sim_matrix[np.ix_(mask_hp.values, mask_hp.values)]
 
     semantic_pairs_df = get_pairs_above_threshold(
         url_df, sim_matrix, threshold=THRESHOLD_MEDIUM, max_pairs=10000
