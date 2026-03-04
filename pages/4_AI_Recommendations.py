@@ -80,7 +80,7 @@ default_idx = (
 )
 
 with st.container(border=True):
-    col_m, col_p, col_b = st.columns([3, 1, 1])
+    col_m, col_p = st.columns([3, 1])
     with col_m:
         selected_label = st.selectbox(
             "🤖 AI Model",
@@ -92,17 +92,9 @@ with st.container(border=True):
         max_pairs_to_analyze = st.number_input(
             "Max pairs",
             min_value=1,
-            max_value=50,
+            max_value=20,
             value=10,
-            help="Max URL pairs to select for analysis (up to 50)",
-        )
-    with col_b:
-        batch_size = st.number_input(
-            "Batch size",
-            min_value=1,
-            max_value=10,
-            value=5,
-            help="Pairs sent per AI call. Smaller = more focused output.",
+            help="Max URL pairs to include in the report (1–20). All pairs are analyzed together in one call for a cohesive report.",
         )
 
 model_id = model_options[selected_label]
@@ -318,53 +310,26 @@ if selected_pairs and st.button(
     st.subheader("AI Analysis")
 
     n_pairs = len(selected_pairs)
-    bs = int(batch_size)
-    n_batches = (n_pairs + bs - 1) // bs
     ctx = additional_context if selected_pairs else ""
 
-    st.caption(
-        f"Model: **{selected_label}**  |  Pairs: **{n_pairs}**  "
-        f"|  Batches: **{n_batches}**"
-    )
+    st.caption(f"Model: **{selected_label}**  |  Pairs: **{n_pairs}**")
 
-    progress_bar = st.progress(0.0, text="Starting analysis…")
-    all_outputs: list[str] = []
+    progress_bar = st.progress(0.0, text="Generating report…")
+    placeholder = st.empty()
+    chunk_text = ""
 
-    for batch_num in range(n_batches):
-        batch = selected_pairs[batch_num * bs: (batch_num + 1) * bs]
-        batch_header = (
-            f"### Batch {batch_num + 1} of {n_batches} "
-            f"(Pairs {batch_num * bs + 1}–{batch_num * bs + len(batch)})"
-        )
-        st.markdown(batch_header)
+    with st.spinner("Analyzing all pairs and generating report…"):
+        for chunk in stream_recommendation(
+            model_id=model_id,
+            url_pairs=selected_pairs,
+            additional_context=ctx,
+        ):
+            chunk_text += chunk
+            placeholder.markdown(chunk_text + "▌")
 
-        progress_bar.progress(
-            batch_num / n_batches,
-            text=f"Analyzing batch {batch_num + 1} of {n_batches}…",
-        )
-
-        placeholder = st.empty()
-        chunk_text = ""
-
-        with st.spinner(f"Analyzing batch {batch_num + 1}…"):
-            for chunk in stream_recommendation(
-                model_id=model_id,
-                url_pairs=batch,
-                additional_context=ctx,
-            ):
-                chunk_text += chunk
-                placeholder.markdown(chunk_text + "▌")
-
-        placeholder.markdown(chunk_text)
-        all_outputs.append(batch_header + "\n\n" + chunk_text)
-
-        progress_bar.progress(
-            (batch_num + 1) / n_batches,
-            text=f"Batch {batch_num + 1} of {n_batches} complete.",
-        )
-
-    progress_bar.progress(1.0, text="Analysis complete ✓")
-    st.session_state.ai_output = "\n\n---\n\n".join(all_outputs)
+    placeholder.markdown(chunk_text)
+    progress_bar.progress(1.0, text="Report complete ✓")
+    st.session_state.ai_output = chunk_text
 
 elif not selected_pairs:
     st.info("Select URL pairs above to enable AI analysis.")
@@ -407,6 +372,7 @@ with st.expander("ℹ️ How to interpret AI recommendations"):
     - 🟡 **Medium** — Address in next content audit cycle
     - 🔵 **Low** — Monitor over time
 
-    **Batch processing:** Pairs are analyzed in groups (configurable batch size). Each batch
-    gets its own focused analysis, which produces cleaner output for large selections.
+    **Report structure:** All selected pairs are analyzed in a single AI call,
+    producing one cohesive report with an Executive Summary, numbered pair
+    analyses, and a prioritized Action Plan table at the end.
     """)

@@ -54,42 +54,43 @@ def build_duplicate_prompt(
     additional_context: str = "",
 ) -> str:
     """
-    Build the AI prompt for analyzing a group of similar URLs.
+    Build a prompt that produces ONE unified, client-facing audit report
+    covering all URL pairs — no batches, no repeated group numbering.
 
     url_pairs: list of dicts with keys:
         url_a, url_b, similarity, gsc_shared_queries (optional list),
         clicks_a, clicks_b, impressions_a, impressions_b
     """
-    prompt_lines = [
-        "You are an expert SEO consultant specializing in content strategy"
-        " and technical SEO.",
+    n = len(url_pairs)
+    lines = [
+        "You are a senior SEO consultant writing a professional, client-facing"
+        " duplicate content audit report.",
         "",
-        "I need your help analyzing a group of web pages that have been"
-        " flagged as potential duplicates or cannibalizing content."
-        " Please analyze the data below and provide specific, actionable"
-        " recommendations.",
+        f"The analysis tool has flagged {n} URL pair(s) for duplicate content"
+        " or keyword cannibalization. Use the data below to write ONE cohesive"
+        " report — not separate independent analyses. Number every pair"
+        " sequentially (Pair 1, Pair 2, …) and keep that numbering consistent"
+        " throughout the entire document.",
         "",
-        "## Flagged URL Groups",
+        "---",
+        "",
+        "## Input Data",
         "",
     ]
 
     for i, pair in enumerate(url_pairs, start=1):
-        prompt_lines.append(f"### Group {i}")
-        prompt_lines.append(f"- **URL A:** {pair.get('url_a', 'N/A')}")
-        prompt_lines.append(f"- **URL B:** {pair.get('url_b', 'N/A')}")
+        lines.append(f"### Pair {i}")
+        lines.append(f"- **URL A:** {pair.get('url_a', 'N/A')}")
+        lines.append(f"- **URL B:** {pair.get('url_b', 'N/A')}")
 
         sim = pair.get('similarity')
         if sim is not None:
-            prompt_lines.append(
-                f"- **Semantic Similarity Score:** {sim:.2%}"
-                " (cosine similarity)"
-            )
+            lines.append(f"- **Semantic Similarity:** {sim:.0%}")
 
         shared_queries = pair.get('gsc_shared_queries', [])
         if shared_queries:
-            top_queries = shared_queries[:5]
-            q_str = ", ".join(f'"{q}"' for q in top_queries)
-            prompt_lines.append(
+            q_str = ", ".join(f'"{q}"' for q in shared_queries[:5])
+            lines.append(
                 f"- **Shared GSC Queries ({len(shared_queries)} total):**"
                 f" {q_str}"
             )
@@ -97,50 +98,67 @@ def build_duplicate_prompt(
         clicks_a = pair.get('clicks_a')
         clicks_b = pair.get('clicks_b')
         if clicks_a is not None and clicks_b is not None:
-            prompt_lines.append(
-                f"- **GSC Clicks — URL A:** {clicks_a},"
+            lines.append(
+                f"- **GSC Clicks — URL A:** {clicks_a} |"
                 f" **URL B:** {clicks_b}"
             )
 
         impr_a = pair.get('impressions_a')
         impr_b = pair.get('impressions_b')
         if impr_a is not None and impr_b is not None:
-            prompt_lines.append(
-                f"- **GSC Impressions — URL A:** {impr_a},"
+            lines.append(
+                f"- **GSC Impressions — URL A:** {impr_a} |"
                 f" **URL B:** {impr_b}"
             )
 
-        prompt_lines.append("")
+        lines.append("")
 
     if additional_context:
-        prompt_lines += [
-            "## Additional Context",
-            additional_context,
-            "",
-        ]
+        lines += ["## Additional Context", additional_context, ""]
 
-    prompt_lines += [
-        "## Your Analysis Should Cover:",
+    lines += [
+        "---",
         "",
-        "1. **Root Cause** — Why are these pages likely duplicating or"
-        " cannibalizing each other?",
-        "2. **Recommended Action** — Choose one:",
-        "   - Consolidate (merge content into one URL)",
-        "   - Canonicalize (set canonical tag pointing to the preferred URL)",
-        "   - Redirect (301 redirect weaker page to stronger page)",
-        "   - Differentiate (make the pages clearly distinct in topic/intent)",
-        "   - No action needed (explain why these are actually fine)",
-        "3. **Which URL to Keep** (if consolidating/redirecting) — and why",
-        "4. **Content Differentiation Suggestions** (if keeping both)"
-        " — specific angles to make each page unique",
-        "5. **Priority Level** — Critical / High / Medium / Low",
+        "## Required Report Structure",
         "",
-        "Be specific and data-driven. Reference the similarity scores and"
-        " GSC metrics in your reasoning.",
-        "Format your response in clear markdown with headers.",
+        "Write the report using exactly this structure:",
+        "",
+        "### Executive Summary",
+        "2–3 sentences covering: how many pairs were analyzed, severity"
+        " breakdown (how many Critical / High / Medium / Low), and the"
+        " dominant issue pattern observed across the site.",
+        "",
+        "### Pair-by-Pair Analysis",
+        "For each pair use this exact sub-structure (keep Pair numbers"
+        " matching the input data above):",
+        "",
+        "**Pair N — [Short descriptive title, e.g., 'Service hub vs."
+        " individual service page']**",
+        "- **Priority:** 🔴 Critical / 🟠 High / 🟡 Medium / 🔵 Low",
+        "- **Recommended Action:** Consolidate / Canonicalize /"
+        " Redirect (301) / Differentiate / No Action Needed",
+        "- **Root Cause:** Why are these URLs competing in search?",
+        "- **Which URL to Keep:** (only if consolidating or redirecting)"
+        " State which URL to keep and why, referencing clicks/impressions"
+        " where available.",
+        "- **Implementation Steps:** Numbered list of concrete next steps.",
+        "",
+        "### Action Plan Summary",
+        "A markdown table with these columns:",
+        "Pair # | URL A | URL B | Recommended Action | Priority",
+        "Sort rows by priority: Critical first, then High, Medium, Low.",
+        "",
+        "---",
+        "",
+        "Rules:",
+        "- Do NOT use the words 'Group' or 'Batch' anywhere in the report.",
+        "- Be concise and data-driven; reference similarity scores and GSC"
+        " metrics directly.",
+        "- Write as if delivering this report to a client — clear, professional,"
+        " and actionable.",
     ]
 
-    return "\n".join(prompt_lines)
+    return "\n".join(lines)
 
 
 def stream_recommendation(
@@ -167,7 +185,7 @@ def stream_recommendation(
             model=model_id,
             messages=[{"role": "user", "content": prompt}],
             stream=True,
-            max_tokens=2000,
+            max_tokens=4096,
             temperature=0.3,  # Lower temp for more consistent SEO advice
         )
         for chunk in stream:
