@@ -60,10 +60,12 @@ has_combined = (
     and not st.session_state.combined_df.empty
 )
 has_semantic = (
-    "sim_matrix" in st.session_state
-    and st.session_state.get("sf_loaded")
+    st.session_state.get("sf_loaded")
+    and st.session_state.get("sim_matrix") is not None
 )
-has_gsc = "cannibalization_findings" in st.session_state
+has_gsc = (
+    st.session_state.get("cannibalization_findings") is not None
+)
 
 if not has_combined and not has_semantic and not has_gsc:
     st.warning(
@@ -123,7 +125,13 @@ pair_source = st.radio(
 selected_pairs: list[dict] = []
 additional_context: str = ""
 
-if pair_source == "Combined Risk Dashboard" and has_combined:
+if pair_source == "Combined Risk Dashboard" and not has_combined:
+    st.info(
+        "No Combined Risk data found. Visit the **Combined Risk** page first to generate "
+        "the cross-referenced risk dashboard, then return here to analyze pairs."
+    )
+
+elif pair_source == "Combined Risk Dashboard" and has_combined:
     combined_df: pd.DataFrame = st.session_state.combined_df
 
     _available_levels = combined_df["alert_level"].unique().tolist()
