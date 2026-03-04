@@ -35,7 +35,8 @@ def _get_credentials_from_secrets() -> tuple[str, str]:
         return "", ""
 
 
-def _refresh_access_token(client_id: str, client_secret: str, refresh_token: str) -> Optional[dict]:
+def _refresh_access_token(client_id: str, client_secret: str,
+                          refresh_token: str) -> Optional[dict]:
     """Exchange a refresh token for a new access token."""
     resp = requests.post(TOKEN_URL, data={
         "client_id": client_id,
@@ -50,7 +51,8 @@ def _refresh_access_token(client_id: str, client_secret: str, refresh_token: str
     return None
 
 
-def _exchange_code_for_token(code: str, redirect_uri: str, client_id: str, client_secret: str) -> Optional[dict]:
+def _exchange_code_for_token(code: str, redirect_uri: str,
+                             client_id: str, client_secret: str) -> Optional[dict]:
     """Exchange an authorization code for access + refresh tokens."""
     resp = requests.post(TOKEN_URL, data={
         "code": code,
@@ -80,7 +82,8 @@ def get_valid_access_token() -> Optional[str]:
         client_id, client_secret = _get_credentials_from_secrets()
         refresh_token = token_data.get("refresh_token")
         if refresh_token and client_id and client_secret:
-            new_data = _refresh_access_token(client_id, client_secret, refresh_token)
+            new_data = _refresh_access_token(
+                client_id, client_secret, refresh_token)
             if new_data:
                 # Preserve refresh_token (not always returned on refresh)
                 if "refresh_token" not in new_data:
@@ -125,7 +128,8 @@ def handle_oauth_callback(code: str, redirect_uri: str) -> bool:
     client_id, client_secret = _get_credentials_from_secrets()
     if not client_id:
         return False
-    token_data = _exchange_code_for_token(code, redirect_uri, client_id, client_secret)
+    token_data = _exchange_code_for_token(
+        code, redirect_uri, client_id, client_secret)
     if token_data:
         st.session_state.gsc_token_data = token_data
         return True
@@ -150,7 +154,8 @@ def init_from_stored_refresh_token() -> bool:
     if not client_id:
         return False
 
-    token_data = _refresh_access_token(client_id, client_secret, stored_refresh)
+    token_data = _refresh_access_token(
+        client_id, client_secret, stored_refresh)
     if token_data:
         if "refresh_token" not in token_data:
             token_data["refresh_token"] = stored_refresh
@@ -205,8 +210,13 @@ def fetch_gsc_data(
     if not token:
         return []
 
-    url = f"{GSC_API_BASE}/sites/{requests.utils.quote(site_url, safe='')}/searchAnalytics/query"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    url = f"{GSC_API_BASE}/sites/{
+        requests.utils.quote(
+            site_url,
+            safe='')}/searchAnalytics/query"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"}
 
     all_rows = []
     start_row = 0
@@ -254,8 +264,14 @@ def fetch_sitemap_urls(site_url: str) -> list[str]:
     if not token:
         return []
 
-    url = f"{GSC_API_BASE}/sites/{requests.utils.quote(site_url, safe='')}/sitemaps"
-    resp = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15)
+    url = f"{GSC_API_BASE}/sites/{
+        requests.utils.quote(
+            site_url, safe='')}/sitemaps"
+    resp = requests.get(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}"},
+        timeout=15)
     if resp.status_code != 200:
         return []
 
@@ -307,7 +323,8 @@ def detect_cannibalization(
         total_clicks = sum(p["clicks"] for p in pages)
         total_impressions = sum(p["impressions"] for p in pages)
 
-        # Impact score: more clicks + more impressions + more competing URLs = higher risk
+        # Impact score: more clicks + more impressions + more competing URLs =
+        # higher risk
         impact_score = round(
             (total_clicks + math.log1p(total_impressions)) * len(pages),
             2,
@@ -331,7 +348,8 @@ def detect_cannibalization(
     return findings
 
 
-def get_url_cannibalization_summary(cannibalization_findings: list[dict]) -> dict[str, dict]:
+def get_url_cannibalization_summary(
+        cannibalization_findings: list[dict]) -> dict[str, dict]:
     """
     Build a per-URL summary of how many queries it's involved in as a cannibalizer.
     Returns dict keyed by URL.

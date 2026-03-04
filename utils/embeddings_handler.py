@@ -17,7 +17,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 from typing import Optional
 
 # Recognized URL column names (case-insensitive match)
-URL_COLUMN_CANDIDATES = ["address", "url", "page", "page_url", "landing page", "source"]
+URL_COLUMN_CANDIDATES = [
+    "address",
+    "url",
+    "page",
+    "page_url",
+    "landing page",
+    "source"]
 
 # Risk thresholds
 THRESHOLD_HIGH = 0.85    # likely duplicate
@@ -38,7 +44,8 @@ def detect_url_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
-def parse_sf_embeddings(file_obj) -> tuple[Optional[pd.DataFrame], Optional[np.ndarray], str]:
+def parse_sf_embeddings(
+        file_obj) -> tuple[Optional[pd.DataFrame], Optional[np.ndarray], str]:
     """
     Parse a Screaming Frog embeddings CSV file.
 
@@ -84,7 +91,8 @@ def parse_sf_embeddings(file_obj) -> tuple[Optional[pd.DataFrame], Optional[np.n
     df_clean = df[[url_col] + embedding_cols].dropna()
     df_clean = df_clean.rename(columns={url_col: "url"})
     df_clean["url"] = df_clean["url"].str.strip()
-    df_clean = df_clean[df_clean["url"].str.startswith("http")]  # sanity filter
+    df_clean = df_clean[df_clean["url"].str.startswith(
+        "http")]  # sanity filter
 
     if len(df_clean) < 2:
         return None, None, "Need at least 2 valid URLs with embeddings to run analysis."
@@ -141,7 +149,10 @@ def get_pairs_above_threshold(
 
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = df.sort_values("similarity", ascending=False).reset_index(drop=True)
+        df = df.sort_values(
+            "similarity",
+            ascending=False).reset_index(
+            drop=True)
     return df
 
 
@@ -235,7 +246,10 @@ def get_summary_stats(
     # Vectorized upper triangle counting
     upper = np.triu(sim_matrix, k=1)
     high_pairs = int(np.sum(upper >= high_threshold))
-    medium_pairs = int(np.sum((upper >= medium_threshold) & (upper < high_threshold)))
+    medium_pairs = int(
+        np.sum(
+            (upper >= medium_threshold) & (
+                upper < high_threshold)))
 
     return {
         "total_urls": n,

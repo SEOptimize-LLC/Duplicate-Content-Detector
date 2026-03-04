@@ -4,15 +4,19 @@ Cross-references semantic similarity (Layer 1) with GSC cannibalization (Layer 2
 to produce a prioritized, combined risk score per URL pair.
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import sys
 import os
+import sys
+
+import numpy as np
+import pandas as pd
+import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.embeddings_handler import get_pairs_above_threshold, THRESHOLD_MEDIUM
+from utils.embeddings_handler import (  # noqa: E402
+    THRESHOLD_MEDIUM,
+    get_pairs_above_threshold,
+)
 
 st.set_page_config(
     page_title="Combined Risk — Duplicate Content Detector",
@@ -28,8 +32,10 @@ st.caption(
 
 # ─── Check what data is available ────────────────────────────────────────────
 
-has_embeddings = st.session_state.get("sf_loaded") and st.session_state.get("sim_matrix") is not None
-has_gsc = st.session_state.get("gsc_loaded") and st.session_state.get("cannibalization_findings") is not None
+has_embeddings = st.session_state.get(
+    "sf_loaded") and st.session_state.get("sim_matrix") is not None
+has_gsc = st.session_state.get("gsc_loaded") and st.session_state.get(
+    "cannibalization_findings") is not None
 
 if not has_embeddings and not has_gsc:
     st.warning(
@@ -81,7 +87,8 @@ if has_gsc:
                         "total_impressions": 0,
                         "max_impact": 0.0,
                     }
-                cannibal_pair_lookup[pair_key]["shared_queries"].append(finding["query"])
+                cannibal_pair_lookup[pair_key]["shared_queries"].append(
+                    finding["query"])
                 cannibal_pair_lookup[pair_key]["total_clicks"] += finding["total_clicks"]
                 cannibal_pair_lookup[pair_key]["total_impressions"] += finding["total_impressions"]
                 cannibal_pair_lookup[pair_key]["max_impact"] = max(
@@ -90,7 +97,7 @@ if has_gsc:
                 )
 
 
-# ─── Build combined DataFrame ─────────────────────────────────────────────────
+# ─── Build combined DataFrame ───────────────────────────────────────────
 
 def build_combined_df() -> pd.DataFrame:
     rows = []
@@ -98,14 +105,19 @@ def build_combined_df() -> pd.DataFrame:
     if has_embeddings and not semantic_pairs_df.empty:
         for _, pair in semantic_pairs_df.iterrows():
             pair_key = tuple(sorted([pair["url_a"], pair["url_b"]]))
-            gsc_info = cannibal_pair_lookup.get(pair_key, {}) if has_gsc else {}
+            gsc_info = cannibal_pair_lookup.get(
+                pair_key, {}) if has_gsc else {}
 
             semantic_score = float(pair["similarity"])
             gsc_impact = gsc_info.get("max_impact", 0.0)
 
             # Normalize GSC impact to 0–1 range
-            max_impact = max((f["impact_score"] for f in cannibal_findings), default=1.0) if cannibal_findings else 1.0
-            gsc_norm = min(gsc_impact / max_impact, 1.0) if max_impact > 0 else 0.0
+            max_impact = max(
+                (f["impact_score"] for f in cannibal_findings),
+                default=1.0) if cannibal_findings else 1.0
+            gsc_norm = min(
+                gsc_impact / max_impact,
+                1.0) if max_impact > 0 else 0.0
 
             combined_score = round(semantic_score * 0.5 + gsc_norm * 0.5, 4)
 
@@ -156,7 +168,10 @@ def build_combined_df() -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
-    df = df.sort_values("combined_score", ascending=False).reset_index(drop=True)
+    df = df.sort_values(
+        "combined_score",
+        ascending=False).reset_index(
+        drop=True)
     return df
 
 
@@ -166,7 +181,8 @@ with st.spinner("Building combined risk dataset..."):
 # ─── Summary ─────────────────────────────────────────────────────────────────
 
 if combined_df.empty:
-    st.success("No combined risk findings. All pages appear sufficiently distinct.")
+    st.success(
+        "No combined risk findings. All pages appear sufficiently distinct.")
     st.stop()
 
 critical = combined_df[combined_df["alert_level"] == "Critical"]
@@ -208,7 +224,7 @@ def color_alert(val):
     return ALERT_COLORS.get(val, "")
 
 
-# ── Tab 1: Critical & High ────────────────────────────────────────────────────
+# ── Tab 1: Critical & High ──────────────────────────────────────────────
 
 with tab1:
     priority_df = combined_df[combined_df["alert_level"].isin(
@@ -223,7 +239,8 @@ with tab1:
             "shared_queries", "gsc_clicks", "combined_score", "alert_level",
         ]
         available_cols = [c for c in display_cols if c in priority_df.columns]
-        styled = priority_df[available_cols].style.applymap(color_alert, subset=["alert_level"])
+        styled = priority_df[available_cols].style.applymap(
+            color_alert, subset=["alert_level"])
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
         if not priority_df.empty:
@@ -233,9 +250,13 @@ with tab1:
                 for _, row in critical.head(10).iterrows():
                     with st.expander(f"{row['url_a'][:60]}... ↔ {row['url_b'][:60]}..."):
                         c1, c2 = st.columns(2)
-                        c1.metric("Semantic Similarity", f"{row['semantic_similarity']:.1%}")
+                        c1.metric(
+                            "Semantic Similarity", f"{
+                                row['semantic_similarity']:.1%}")
                         c2.metric("Shared GSC Queries", row["shared_queries"])
-                        c1.metric("Combined Score", f"{row['combined_score']:.2f}")
+                        c1.metric(
+                            "Combined Score", f"{
+                                row['combined_score']:.2f}")
                         c2.metric("GSC Clicks at Risk", row["gsc_clicks"])
                         st.markdown(f"**URL A:** `{row['url_a']}`")
                         st.markdown(f"**URL B:** `{row['url_b']}`")
@@ -248,7 +269,7 @@ with tab1:
             mime="text/csv",
         )
 
-# ── Tab 2: All Findings ───────────────────────────────────────────────────────
+# ── Tab 2: All Findings ─────────────────────────────────────────────────
 
 with tab2:
     st.subheader(f"All Flagged Pairs ({len(combined_df):,})")
@@ -260,7 +281,8 @@ with tab2:
         key="alert_filter",
     )
 
-    filtered = combined_df[combined_df["alert_level"].isin(alert_filter)] if alert_filter else combined_df
+    filtered = combined_df[combined_df["alert_level"].isin(
+        alert_filter)] if alert_filter else combined_df
     st.dataframe(filtered, use_container_width=True, hide_index=True)
     st.caption(f"Showing {len(filtered)} of {len(combined_df)} pairs")
 
@@ -272,7 +294,7 @@ with tab2:
         mime="text/csv",
     )
 
-# ── Tab 3: Scatter Plot ───────────────────────────────────────────────────────
+# ── Tab 3: Scatter Plot ─────────────────────────────────────────────────
 
 with tab3:
     if has_embeddings and has_gsc:
@@ -310,8 +332,16 @@ with tab3:
             )
 
             # Quadrant lines
-            fig.add_vline(x=0.85, line_dash="dash", line_color="gray", annotation_text="High similarity")
-            fig.add_hline(y=plot_df["gsc_impact_score"].quantile(0.80), line_dash="dash", line_color="gray", annotation_text="High GSC impact")
+            fig.add_vline(
+                x=0.85,
+                line_dash="dash",
+                line_color="gray",
+                annotation_text="High similarity")
+            fig.add_hline(
+                y=plot_df["gsc_impact_score"].quantile(0.80),
+                line_dash="dash",
+                line_color="gray",
+                annotation_text="High GSC impact")
 
             fig.update_layout(height=550)
             st.plotly_chart(fig, use_container_width=True)
@@ -325,11 +355,12 @@ with tab3:
     else:
         st.info("This chart requires both SF embeddings and GSC data.")
 
-# ── Tab 4: URL Leaderboard ────────────────────────────────────────────────────
+# ── Tab 4: URL Leaderboard ──────────────────────────────────────────────
 
 with tab4:
     st.subheader("URLs with Most Duplicate Risk")
-    st.caption("Aggregated per-URL stats combining semantic and cannibalization signals.")
+    st.caption(
+        "Aggregated per-URL stats combining semantic and cannibalization signals.")
 
     url_agg: dict[str, dict] = {}
 
@@ -353,12 +384,16 @@ with tab4:
                 url_agg[url]["critical_count"] += 1
 
     leaderboard_df = pd.DataFrame(list(url_agg.values()))
-    leaderboard_df = leaderboard_df.sort_values("total_combined_score", ascending=False).reset_index(drop=True)
+    leaderboard_df = leaderboard_df.sort_values(
+        "total_combined_score",
+        ascending=False).reset_index(
+        drop=True)
 
     # Add GSC cannibalization stats
     if url_cannibal_summary:
         leaderboard_df["gsc_queries_competing"] = leaderboard_df["url"].map(
-            lambda u: url_cannibal_summary.get(u, {}).get("queries_competing", 0)
+            lambda u: url_cannibal_summary.get(
+                u, {}).get("queries_competing", 0)
         )
 
     st.dataframe(leaderboard_df, use_container_width=True, hide_index=True)

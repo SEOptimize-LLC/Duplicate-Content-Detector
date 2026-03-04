@@ -74,7 +74,8 @@ def build_duplicate_prompt(
 
         sim = pair.get('similarity')
         if sim is not None:
-            prompt_lines.append(f"- **Semantic Similarity Score:** {sim:.2%} (cosine similarity)")
+            prompt_lines.append(
+                f"- **Semantic Similarity Score:** {sim:.2%} (cosine similarity)")
 
         shared_queries = pair.get('gsc_shared_queries', [])
         if shared_queries:
@@ -85,12 +86,14 @@ def build_duplicate_prompt(
         clicks_a = pair.get('clicks_a')
         clicks_b = pair.get('clicks_b')
         if clicks_a is not None and clicks_b is not None:
-            prompt_lines.append(f"- **GSC Clicks — URL A:** {clicks_a}, **URL B:** {clicks_b}")
+            prompt_lines.append(
+                f"- **GSC Clicks — URL A:** {clicks_a}, **URL B:** {clicks_b}")
 
         impr_a = pair.get('impressions_a')
         impr_b = pair.get('impressions_b')
         if impr_a is not None and impr_b is not None:
-            prompt_lines.append(f"- **GSC Impressions — URL A:** {impr_a}, **URL B:** {impr_b}")
+            prompt_lines.append(
+                f"- **GSC Impressions — URL A:** {impr_a}, **URL B:** {impr_b}")
 
         prompt_lines.append("")
 
@@ -162,4 +165,5 @@ def get_recommendation(
     """
     Non-streaming version — returns the full recommendation as a string.
     """
-    return "".join(stream_recommendation(model_id, url_pairs, additional_context))
+    return "".join(stream_recommendation(
+        model_id, url_pairs, additional_context))

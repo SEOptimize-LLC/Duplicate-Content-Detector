@@ -3,23 +3,28 @@ Page 2 — Semantic Similarity Analysis
 Computes and displays pairwise cosine similarity from Screaming Frog embeddings.
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import sys
 import os
+import sys
+
+import numpy as np
+import pandas as pd
+import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.embeddings_handler import (
-    compute_similarity_matrix,
-    get_pairs_above_threshold,
-    build_heatmap_data,
-    get_summary_stats,
+from utils.clustering import (  # noqa: E402
+    build_clusters,
+    clusters_to_dataframe,
+    compute_url_risk_summary,
+)
+from utils.embeddings_handler import (  # noqa: E402
     THRESHOLD_HIGH,
     THRESHOLD_MEDIUM,
+    build_heatmap_data,
+    compute_similarity_matrix,
+    get_pairs_above_threshold,
+    get_summary_stats,
 )
-from utils.clustering import build_clusters, clusters_to_dataframe, compute_url_risk_summary
 
 st.set_page_config(
     page_title="Semantic Similarity — Duplicate Content Detector",
@@ -28,12 +33,15 @@ st.set_page_config(
 )
 
 st.title("🔍 Semantic Similarity Analysis")
-st.caption("Detects pages with highly similar content using pre-computed Screaming Frog embeddings.")
+st.caption(
+    "Detects pages with highly similar content using pre-computed Screaming Frog embeddings.")
 
 # ─── Guard: require SF embeddings ────────────────────────────────────────────
 
-if not st.session_state.get("sf_loaded") or st.session_state.get("url_df") is None:
-    st.warning("No embeddings loaded. Please go to **Data Input** and upload your Screaming Frog embeddings CSV.")
+if not st.session_state.get(
+        "sf_loaded") or st.session_state.get("url_df") is None:
+    st.warning(
+        "No embeddings loaded. Please go to **Data Input** and upload your Screaming Frog embeddings CSV.")
     st.stop()
 
 url_df: pd.DataFrame = st.session_state.url_df
@@ -45,7 +53,8 @@ if filter_urls:
     mask = url_df["url"].isin(filter_urls)
     url_df = url_df[mask].reset_index(drop=True)
     embeddings = embeddings[mask.values]
-    st.info(f"URL filter applied: showing {len(url_df)} of {len(st.session_state.url_df)} URLs")
+    st.info(
+        f"URL filter applied: showing {len(url_df)} of {len(st.session_state.url_df)} URLs")
 
 if len(url_df) < 2:
     st.error("Need at least 2 URLs to compute similarity. Adjust your URL filter.")
@@ -130,20 +139,29 @@ with tab1:
     st.subheader(f"URL Pairs with Similarity ≥ {threshold:.0%}")
 
     pairs_df = get_pairs_above_threshold(
-        url_df, sim_matrix, threshold=threshold, max_pairs=int(max_pairs_display)
+        url_df, sim_matrix, threshold=threshold, max_pairs=int(
+            max_pairs_display)
     )
 
     if pairs_df.empty:
-        st.info(f"No pairs found above {threshold:.0%} threshold. Try lowering the threshold.")
+        st.info(
+            f"No pairs found above {
+                threshold:.0%} threshold. Try lowering the threshold.")
     else:
         # Color-code risk levels
         def color_risk(val):
-            colors = {"High": "background-color:#ffcccc", "Medium": "background-color:#fff3cc", "Low": "background-color:#e8f5e9"}
+            colors = {
+                "High": "background-color:#ffcccc",
+                "Medium": "background-color:#fff3cc",
+                "Low": "background-color:#e8f5e9"}
             return colors.get(val, "")
 
         styled = pairs_df.style.applymap(color_risk, subset=["risk_level"])
         st.dataframe(styled, use_container_width=True, hide_index=True)
-        st.caption(f"Showing {len(pairs_df):,} pairs (max {int(max_pairs_display):,})")
+        st.caption(
+            f"Showing {
+                len(pairs_df):,} pairs (max {
+                int(max_pairs_display):,})")
 
         csv = pairs_df.to_csv(index=False)
         st.download_button(
@@ -153,24 +171,30 @@ with tab1:
             mime="text/csv",
         )
 
-# ── Tab 2: Clusters ───────────────────────────────────────────────────────────
+# ── Tab 2: Clusters ─────────────────────────────────────────────────────
 
 with tab2:
     st.subheader(f"Duplicate Clusters (threshold = {cluster_threshold:.0%})")
 
     with st.spinner("Building clusters..."):
-        clusters = build_clusters(url_df, sim_matrix, threshold=cluster_threshold)
+        clusters = build_clusters(
+            url_df, sim_matrix, threshold=cluster_threshold)
 
     if not clusters:
-        st.info(f"No clusters found at {cluster_threshold:.0%} threshold. Try lowering the cluster threshold.")
+        st.info(
+            f"No clusters found at {
+                cluster_threshold:.0%} threshold. Try lowering the cluster threshold.")
     else:
         cluster_df = clusters_to_dataframe(clusters, url_df, sim_matrix)
         st.metric("Clusters Found", len(clusters))
 
         for i, cluster in enumerate(clusters, start=1):
-            avg_sim = cluster_df[cluster_df["cluster_id"] == i]["avg_similarity"].iloc[0]
+            avg_sim = cluster_df[cluster_df["cluster_id"]
+                                 == i]["avg_similarity"].iloc[0]
             with st.expander(
-                f"Cluster {i} — {len(cluster)} URLs (avg similarity: {avg_sim:.1%})",
+                f"Cluster {i} — {
+                    len(cluster)} URLs (avg similarity: {
+                    avg_sim:.1%})",
                 expanded=(i <= 5),
             ):
                 for url in cluster:
@@ -188,14 +212,16 @@ with tab2:
         st.session_state.clusters = clusters
         st.session_state.cluster_df = cluster_df
 
-# ── Tab 3: Heatmap ────────────────────────────────────────────────────────────
+# ── Tab 3: Heatmap ──────────────────────────────────────────────────────
 
 with tab3:
     st.subheader("Similarity Heatmap (Top 50 URLs)")
 
-    max_heatmap = st.slider("Max URLs in heatmap", 10, 50, 30, key="heatmap_size")
+    max_heatmap = st.slider("Max URLs in heatmap", 10,
+                            50, 30, key="heatmap_size")
 
-    labels, sub_matrix = build_heatmap_data(url_df, sim_matrix.copy(), max_urls=max_heatmap)
+    labels, sub_matrix = build_heatmap_data(
+        url_df, sim_matrix.copy(), max_urls=max_heatmap)
 
     try:
         import plotly.graph_objects as go
@@ -220,13 +246,14 @@ with tab3:
         )
         st.plotly_chart(fig, use_container_width=True)
     except ImportError:
-        st.warning("Install `plotly` to enable the heatmap visualization. Showing raw matrix instead.")
+        st.warning(
+            "Install `plotly` to enable the heatmap visualization. Showing raw matrix instead.")
         st.dataframe(
             pd.DataFrame(sub_matrix, index=labels, columns=labels),
             use_container_width=True,
         )
 
-# ── Tab 4: URL Risk Summary ───────────────────────────────────────────────────
+# ── Tab 4: URL Risk Summary ─────────────────────────────────────────────
 
 with tab4:
     st.subheader("Per-URL Risk Summary")
@@ -239,7 +266,11 @@ with tab4:
         st.info("No data to display.")
     else:
         def color_risk_row(row):
-            colors = {"High": "#ffcccc", "Medium": "#fff3cc", "Low": "#e8f5e9", "Minimal": ""}
+            colors = {
+                "High": "#ffcccc",
+                "Medium": "#fff3cc",
+                "Low": "#e8f5e9",
+                "Minimal": ""}
             bg = colors.get(row["risk_level"], "")
             return [f"background-color: {bg}"] * len(row)
 

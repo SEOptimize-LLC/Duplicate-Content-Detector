@@ -99,12 +99,14 @@ def clusters_to_dataframe(
             })
 
     if not rows:
-        return pd.DataFrame(columns=["cluster_id", "url", "cluster_size", "avg_similarity"])
+        return pd.DataFrame(
+            columns=["cluster_id", "url", "cluster_size", "avg_similarity"])
 
     return pd.DataFrame(rows)
 
 
-def get_cluster_for_url(url: str, clusters: list[list[str]]) -> Optional[list[str]]:
+def get_cluster_for_url(
+        url: str, clusters: list[list[str]]) -> Optional[list[str]]:
     """Return the cluster containing a given URL, or None."""
     for cluster in clusters:
         if url in cluster:
@@ -139,7 +141,10 @@ def compute_url_risk_summary(
         max_sim = float(np.max(row_sims))
         avg_sim = float(np.mean(row_sims))
         high_count = int(np.sum(row_sims >= threshold_high))
-        medium_count = int(np.sum((row_sims >= threshold_medium) & (row_sims < threshold_high)))
+        medium_count = int(
+            np.sum(
+                (row_sims >= threshold_medium) & (
+                    row_sims < threshold_high)))
 
         if max_sim >= threshold_high:
             risk = "High"
@@ -160,5 +165,8 @@ def compute_url_risk_summary(
         })
 
     df = pd.DataFrame(rows)
-    df = df.sort_values("max_similarity", ascending=False).reset_index(drop=True)
+    df = df.sort_values(
+        "max_similarity",
+        ascending=False).reset_index(
+        drop=True)
     return df

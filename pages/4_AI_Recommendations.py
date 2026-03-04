@@ -3,18 +3,19 @@ Page 5 — AI Recommendations
 Uses OpenRouter to generate specific remediation advice for flagged URL pairs/groups.
 """
 
-import streamlit as st
-import pandas as pd
-import sys
 import os
+import sys
+
+import pandas as pd
+import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.openrouter_handler import (
-    AVAILABLE_MODELS,
-    stream_recommendation,
-    get_client,
+from utils.embeddings_handler import (  # noqa: E402
+    THRESHOLD_HIGH,
+    get_pairs_above_threshold,
 )
+from utils.openrouter_handler import stream_recommendation  # noqa: E402
 
 st.set_page_config(
     page_title="AI Recommendations — Duplicate Content Detector",
@@ -28,7 +29,7 @@ st.caption(
     "powered by your choice of AI model."
 )
 
-# ─── Check OpenRouter API key ─────────────────────────────────────────────────
+# ─── Check OpenRouter API key ───────────────────────────────────────────
 
 try:
     has_api_key = bool(st.secrets.get("OPENROUTER_API_KEY", ""))
@@ -45,7 +46,8 @@ if not has_api_key:
 # ─── Check for analysis data ─────────────────────────────────────────────────
 
 has_combined = "combined_df" in st.session_state and not st.session_state.combined_df.empty
-has_semantic = "sim_matrix" in st.session_state and st.session_state.get("sf_loaded")
+has_semantic = "sim_matrix" in st.session_state and st.session_state.get(
+    "sf_loaded")
 has_gsc = "cannibalization_findings" in st.session_state
 
 if not has_combined and not has_semantic and not has_gsc:
@@ -55,28 +57,43 @@ if not has_combined and not has_semantic and not has_gsc:
     )
     st.stop()
 
-# ─── Model selection ─────────────────────────────────────────────────────────
+# ─── Model selection (reads from session state set on setup page) ────────────
 
-st.sidebar.header("Model Settings")
+from utils.openrouter_handler import AVAILABLE_MODELS  # noqa: E402
 
 model_options = {m["label"]: m["id"] for m in AVAILABLE_MODELS}
-selected_label = st.sidebar.selectbox(
-    "AI Model",
-    options=list(model_options.keys()),
-    index=0,
+model_labels = list(model_options.keys())
+
+# Default to whatever was chosen on the setup page
+saved_label = st.session_state.get("selected_model_label", model_labels[0])
+default_idx = (
+    model_labels.index(saved_label) if saved_label in model_labels else 0
 )
+
+with st.container(border=True):
+    mcol, pcol = st.columns([3, 1])
+    with mcol:
+        selected_label = st.selectbox(
+            "🤖 AI Model",
+            options=model_labels,
+            index=default_idx,
+            key="ai_page_model",
+        )
+    with pcol:
+        max_pairs_to_analyze = st.number_input(
+            "Max pairs",
+            min_value=1,
+            max_value=10,
+            value=3,
+            help="URL pairs per AI call",
+        )
+
 model_id = model_options[selected_label]
-st.sidebar.caption(f"Model ID: `{model_id}`")
+# Sync back to session state so setup page stays in sync
+st.session_state.selected_model_label = selected_label
+st.session_state.selected_model_id = model_id
 
-max_pairs_to_analyze = st.sidebar.number_input(
-    "Max pairs per analysis",
-    min_value=1,
-    max_value=10,
-    value=3,
-    help="Analyze up to this many URL pairs per AI call (more = longer, higher cost).",
-)
-
-# ─── URL pair selection ───────────────────────────────────────────────────────
+# ─── URL pair selection ─────────────────────────────────────────────────
 
 st.subheader("Select URL Pairs to Analyze")
 
@@ -103,7 +120,8 @@ if pair_source == "Combined Risk Dashboard" and has_combined:
         default=["Critical", "High — Semantic", "High — GSC"],
         key="ai_alert_filter",
     )
-    filtered_df = combined_df[combined_df["alert_level"].isin(alert_filter)].head(50)
+    filtered_df = combined_df[combined_df["alert_level"].isin(
+        alert_filter)].head(50)
 
     if filtered_df.empty:
         st.info("No pairs match your filter.")
@@ -132,7 +150,8 @@ if pair_source == "Combined Risk Dashboard" and has_combined:
                 cannibal_findings = st.session_state.cannibalization_findings
                 for f in cannibal_findings:
                     pair_key = tuple(sorted([row["url_a"], row["url_b"]]))
-                    if tuple(sorted([f["urls"][0], f["urls"][-1] if len(f["urls"]) > 1 else f["urls"][0]])) == pair_key:
+                    if tuple(sorted(
+                            [f["urls"][0], f["urls"][-1] if len(f["urls"]) > 1 else f["urls"][0]])) == pair_key:
                         shared_queries.append(f["query"])
 
             # Get per-URL click/impression data from GSC
@@ -164,10 +183,12 @@ elif pair_source == "Semantic Similarity Pairs" and has_semantic:
 
     url_df = st.session_state.url_df
     sim_matrix = st.session_state.sim_matrix
-    pairs_df = get_pairs_above_threshold(url_df, sim_matrix, threshold=THRESHOLD_HIGH, max_pairs=50)
+    pairs_df = get_pairs_above_threshold(
+        url_df, sim_matrix, threshold=THRESHOLD_HIGH, max_pairs=50)
 
     if pairs_df.empty:
-        st.info("No high-similarity pairs found. Lower the threshold on the Semantic Similarity page.")
+        st.info(
+            "No high-similarity pairs found. Lower the threshold on the Semantic Similarity page.")
     else:
         pair_labels = [
             f"{row['url_a'][:50]}... ↔ {row['url_b'][:50]}... [sim={row['similarity']:.0%}]"
@@ -191,7 +212,10 @@ elif pair_source == "Semantic Similarity Pairs" and has_semantic:
 elif pair_source == "GSC Cannibalization" and has_gsc:
     cannibal_findings = st.session_state.cannibalization_findings[:50]
     finding_labels = [
-        f"Query: '{f['query']}' — {f['num_competing_urls']} URLs — Impact: {f['impact_score']:.1f}"
+        f"Query: '{
+            f['query']}' — {
+            f['num_competing_urls']} URLs — Impact: {
+            f['impact_score']:.1f}"
         for f in cannibal_findings
     ]
     selected_finding_indices = st.multiselect(
@@ -220,14 +244,20 @@ elif pair_source == "Manual Entry":
     st.markdown("Enter up to 2 URLs to compare manually:")
     col1, col2 = st.columns(2)
     with col1:
-        url_a = st.text_input("URL A", placeholder="https://example.com/page-1", key="manual_url_a")
+        url_a = st.text_input(
+            "URL A",
+            placeholder="https://example.com/page-1",
+            key="manual_url_a")
     with col2:
-        url_b = st.text_input("URL B", placeholder="https://example.com/page-2", key="manual_url_b")
+        url_b = st.text_input(
+            "URL B",
+            placeholder="https://example.com/page-2",
+            key="manual_url_b")
 
     if url_a and url_b:
         selected_pairs = [{"url_a": url_a.strip(), "url_b": url_b.strip()}]
 
-# ─── Additional context ───────────────────────────────────────────────────────
+# ─── Additional context ─────────────────────────────────────────────────
 
 if selected_pairs:
     additional_context = st.text_area(
@@ -238,12 +268,14 @@ if selected_pairs:
         key="ai_additional_context",
     )
 
-# ─── Run analysis ─────────────────────────────────────────────────────────────
+# ─── Run analysis ───────────────────────────────────────────────────────
 
-if selected_pairs and st.button("🤖 Generate AI Recommendations", type="primary", key="run_ai"):
+if selected_pairs and st.button(
+        "🤖 Generate AI Recommendations", type="primary", key="run_ai"):
     st.divider()
     st.subheader("AI Analysis")
-    st.caption(f"Model: **{selected_label}**  |  Pairs: **{len(selected_pairs)}**")
+    st.caption(
+        f"Model: **{selected_label}**  |  Pairs: **{len(selected_pairs)}**")
 
     output_placeholder = st.empty()
     full_output = ""
@@ -276,7 +308,7 @@ if selected_pairs and st.button("🤖 Generate AI Recommendations", type="primar
 elif not selected_pairs:
     st.info("Select URL pairs above to enable AI analysis.")
 
-# ─── Instructions ─────────────────────────────────────────────────────────────
+# ─── Instructions ───────────────────────────────────────────────────────
 
 with st.expander("ℹ️ How to interpret AI recommendations"):
     st.markdown("""

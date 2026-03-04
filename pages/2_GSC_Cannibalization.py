@@ -3,14 +3,18 @@ Page 3 — GSC Keyword Cannibalization
 Identifies queries where multiple URLs are competing for clicks and impressions.
 """
 
-import streamlit as st
-import pandas as pd
-import sys
 import os
+import sys
+
+import pandas as pd
+import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.gsc_handler import detect_cannibalization, get_url_cannibalization_summary
+from utils.gsc_handler import (  # noqa: E402
+    detect_cannibalization,
+    get_url_cannibalization_summary,
+)
 
 st.set_page_config(
     page_title="GSC Cannibalization — Duplicate Content Detector",
@@ -26,8 +30,10 @@ st.caption(
 
 # ─── Guard: require GSC data ─────────────────────────────────────────────────
 
-if not st.session_state.get("gsc_loaded") or st.session_state.get("gsc_data") is None:
-    st.warning("No GSC data loaded. Please go to **Data Input** and connect to Google Search Console.")
+if not st.session_state.get(
+        "gsc_loaded") or st.session_state.get("gsc_data") is None:
+    st.warning(
+        "No GSC data loaded. Please go to **Data Input** and connect to Google Search Console.")
     st.stop()
 
 gsc_df: pd.DataFrame = st.session_state.gsc_data
@@ -38,7 +44,10 @@ if filter_urls:
     filtered = gsc_df[gsc_df["page"].isin(filter_urls)]
     if len(filtered) > 0:
         gsc_df = filtered
-        st.info(f"URL filter applied: {gsc_df['page'].nunique()} URLs, {len(gsc_df):,} rows")
+        st.info(
+            f"URL filter applied: {
+                gsc_df['page'].nunique()} URLs, {
+                len(gsc_df):,} rows")
 
 # ─── Controls ────────────────────────────────────────────────────────────────
 
@@ -83,7 +92,8 @@ with st.spinner("Detecting cannibalization..."):
 
 # Store for combined risk page
 st.session_state.cannibalization_findings = findings
-st.session_state.url_cannibal_summary = get_url_cannibalization_summary(findings)
+st.session_state.url_cannibal_summary = get_url_cannibalization_summary(
+    findings)
 
 # ─── Summary metrics ─────────────────────────────────────────────────────────
 
@@ -118,7 +128,8 @@ tab1, tab2, tab3 = st.tabs([
     "🔗 URL Summary",
 ])
 
-# ── Build display DataFrame ───────────────────────────────────────────────────
+# ── Build display DataFrame ─────────────────────────────────────────────
+
 
 def findings_to_df(findings_list: list[dict]) -> pd.DataFrame:
     rows = []
@@ -132,7 +143,8 @@ def findings_to_df(findings_list: list[dict]) -> pd.DataFrame:
             "Dominant URL": f["dominant_url"],
             "Dominant Clicks": f["dominant_clicks"],
             "Competing URLs": ", ".join(f["competing_urls"][:3]) + (
-                f" (+{len(f['competing_urls']) - 3} more)" if len(f["competing_urls"]) > 3 else ""
+                f" (+{len(f['competing_urls']) -
+                      3} more)" if len(f["competing_urls"]) > 3 else ""
             ),
             "Total Clicks": f["total_clicks"],
             "Total Impressions": f["total_impressions"],
@@ -141,7 +153,7 @@ def findings_to_df(findings_list: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ── Tab 1: High Impact ────────────────────────────────────────────────────────
+# ── Tab 1: High Impact ──────────────────────────────────────────────────
 
 with tab1:
     st.subheader(f"Top {show_top_pct}% — Highest Impact Cannibalization")
@@ -170,7 +182,8 @@ with tab1:
                         f"Impressions: **{finding['dominant_impressions']}**"
                     )
                 with col_b:
-                    st.markdown(f"**Competing URLs** ({len(finding['competing_urls'])}):")
+                    st.markdown(
+                        f"**Competing URLs** ({len(finding['competing_urls'])}):")
                     for url in finding["competing_urls"]:
                         url_data = [
                             r for r in gsc_rows
@@ -178,7 +191,8 @@ with tab1:
                         ]
                         clicks = url_data[0]["clicks"] if url_data else 0
                         impressions = url_data[0]["impressions"] if url_data else 0
-                        st.markdown(f"- `{url}` — {clicks} clicks / {impressions} impr.")
+                        st.markdown(
+                            f"- `{url}` — {clicks} clicks / {impressions} impr.")
 
         csv = hi_df.to_csv(index=False)
         st.download_button(
@@ -188,13 +202,16 @@ with tab1:
             mime="text/csv",
         )
 
-# ── Tab 2: All Queries ────────────────────────────────────────────────────────
+# ── Tab 2: All Queries ──────────────────────────────────────────────────
 
 with tab2:
     st.subheader(f"All Cannibalized Queries ({len(findings):,})")
 
     # Search filter
-    search_term = st.text_input("Filter queries", placeholder="Type to search...", key="cannibal_search")
+    search_term = st.text_input(
+        "Filter queries",
+        placeholder="Type to search...",
+        key="cannibal_search")
 
     filtered_findings = [
         f for f in findings
@@ -213,11 +230,12 @@ with tab2:
         mime="text/csv",
     )
 
-# ── Tab 3: URL Summary ────────────────────────────────────────────────────────
+# ── Tab 3: URL Summary ──────────────────────────────────────────────────
 
 with tab3:
     st.subheader("URL-Level Cannibalization Summary")
-    st.caption("How many queries is each URL involved in as either the dominant or a competing page?")
+    st.caption(
+        "How many queries is each URL involved in as either the dominant or a competing page?")
 
     url_summary = st.session_state.url_cannibal_summary
 
@@ -234,7 +252,8 @@ with tab3:
                 "Total Impact Score": round(data["total_impact"], 1),
             })
 
-        summary_df = pd.DataFrame(summary_rows).sort_values("Total Impact Score", ascending=False)
+        summary_df = pd.DataFrame(summary_rows).sort_values(
+            "Total Impact Score", ascending=False)
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
         csv = summary_df.to_csv(index=False)
@@ -254,7 +273,9 @@ try:
     import plotly.express as px
 
     chart_data = pd.DataFrame([
-        {"query": f["query"][:50], "impact": f["impact_score"], "urls": f["num_competing_urls"]}
+        {"query": f["query"][:50],
+         "impact": f["impact_score"],
+         "urls": f["num_competing_urls"]}
         for f in findings[:20]
     ])
 
@@ -265,7 +286,10 @@ try:
         orientation="h",
         color="urls",
         color_continuous_scale="Reds",
-        labels={"impact": "Impact Score", "query": "Query", "urls": "# Competing URLs"},
+        labels={
+            "impact": "Impact Score",
+            "query": "Query",
+            "urls": "# Competing URLs"},
         title="Top 20 Cannibalized Queries",
     )
     fig.update_layout(yaxis=dict(autorange="reversed"), height=500)
