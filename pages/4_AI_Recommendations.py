@@ -15,7 +15,10 @@ from utils.embeddings_handler import (  # noqa: E402
     THRESHOLD_HIGH,
     get_pairs_above_threshold,
 )
-from utils.openrouter_handler import stream_recommendation  # noqa: E402
+from utils.openrouter_handler import (  # noqa: E402
+    AVAILABLE_MODELS,
+    stream_recommendation,
+)
 
 st.set_page_config(
     page_title="AI Recommendations — Duplicate Content Detector",
@@ -29,10 +32,14 @@ st.caption(
     "powered by your choice of AI model."
 )
 
-# ─── Check OpenRouter API key ───────────────────────────────────────────
+# ─── Check OpenRouter API key ────────────────────────────────────────────────
 
 try:
-    has_api_key = bool(st.secrets.get("OPENROUTER_API_KEY", ""))
+    _or_key = (
+        st.secrets.get("OPENROUTER_API_KEY", "")
+        or st.secrets.get("gsc", {}).get("OPENROUTER_API_KEY", "")
+    )
+    has_api_key = bool(_or_key) and "YOUR_OPENROUTER" not in _or_key
 except Exception:
     has_api_key = False
 
@@ -45,9 +52,14 @@ if not has_api_key:
 
 # ─── Check for analysis data ─────────────────────────────────────────────────
 
-has_combined = "combined_df" in st.session_state and not st.session_state.combined_df.empty
-has_semantic = "sim_matrix" in st.session_state and st.session_state.get(
-    "sf_loaded")
+has_combined = (
+    "combined_df" in st.session_state
+    and not st.session_state.combined_df.empty
+)
+has_semantic = (
+    "sim_matrix" in st.session_state
+    and st.session_state.get("sf_loaded")
+)
 has_gsc = "cannibalization_findings" in st.session_state
 
 if not has_combined and not has_semantic and not has_gsc:
@@ -57,43 +69,47 @@ if not has_combined and not has_semantic and not has_gsc:
     )
     st.stop()
 
-# ─── Model selection (reads from session state set on setup page) ────────────
-
-from utils.openrouter_handler import AVAILABLE_MODELS  # noqa: E402
+# ─── Model + batch settings ──────────────────────────────────────────────────
 
 model_options = {m["label"]: m["id"] for m in AVAILABLE_MODELS}
 model_labels = list(model_options.keys())
 
-# Default to whatever was chosen on the setup page
 saved_label = st.session_state.get("selected_model_label", model_labels[0])
 default_idx = (
     model_labels.index(saved_label) if saved_label in model_labels else 0
 )
 
 with st.container(border=True):
-    mcol, pcol = st.columns([3, 1])
-    with mcol:
+    col_m, col_p, col_b = st.columns([3, 1, 1])
+    with col_m:
         selected_label = st.selectbox(
             "🤖 AI Model",
             options=model_labels,
             index=default_idx,
             key="ai_page_model",
         )
-    with pcol:
+    with col_p:
         max_pairs_to_analyze = st.number_input(
             "Max pairs",
             min_value=1,
+            max_value=50,
+            value=10,
+            help="Max URL pairs to select for analysis (up to 50)",
+        )
+    with col_b:
+        batch_size = st.number_input(
+            "Batch size",
+            min_value=1,
             max_value=10,
-            value=3,
-            help="URL pairs per AI call",
+            value=5,
+            help="Pairs sent per AI call. Smaller = more focused output.",
         )
 
 model_id = model_options[selected_label]
-# Sync back to session state so setup page stays in sync
 st.session_state.selected_model_label = selected_label
 st.session_state.selected_model_id = model_id
 
-# ─── URL pair selection ─────────────────────────────────────────────────
+# ─── URL pair selection ──────────────────────────────────────────────────────
 
 st.subheader("Select URL Pairs to Analyze")
 
@@ -126,13 +142,21 @@ if pair_source == "Combined Risk Dashboard" and has_combined:
     if filtered_df.empty:
         st.info("No pairs match your filter.")
     else:
-        # Let user pick pairs
         pair_labels = [
             f"{row['url_a'][:50]}... ↔ {row['url_b'][:50]}... "
             f"[sim={row.get('semantic_similarity', 0) or 0:.0%}, "
             f"alert={row['alert_level']}]"
             for _, row in filtered_df.iterrows()
         ]
+
+        # Quick-select top N button
+        if st.button(
+            f"⚡ Auto-select top {int(max_pairs_to_analyze)} critical pairs",
+            key="auto_select_combined",
+        ):
+            st.session_state.selected_pair_indices = list(
+                range(min(int(max_pairs_to_analyze), len(pair_labels)))
+            )
 
         selected_indices = st.multiselect(
             f"Choose up to {int(max_pairs_to_analyze)} pairs to analyze",
@@ -144,17 +168,18 @@ if pair_source == "Combined Risk Dashboard" and has_combined:
 
         for idx in selected_indices:
             row = filtered_df.iloc[idx]
-            # Find shared queries from GSC if available
             shared_queries = []
             if has_gsc:
                 cannibal_findings = st.session_state.cannibalization_findings
                 for f in cannibal_findings:
                     pair_key = tuple(sorted([row["url_a"], row["url_b"]]))
-                    if tuple(sorted(
-                            [f["urls"][0], f["urls"][-1] if len(f["urls"]) > 1 else f["urls"][0]])) == pair_key:
+                    f_key = tuple(sorted([
+                        f["urls"][0],
+                        f["urls"][-1] if len(f["urls"]) > 1 else f["urls"][0],
+                    ]))
+                    if f_key == pair_key:
                         shared_queries.append(f["query"])
 
-            # Get per-URL click/impression data from GSC
             gsc_data = st.session_state.get("gsc_data")
             clicks_a = clicks_b = impressions_a = impressions_b = None
             if gsc_data is not None:
@@ -179,8 +204,6 @@ if pair_source == "Combined Risk Dashboard" and has_combined:
             })
 
 elif pair_source == "Semantic Similarity Pairs" and has_semantic:
-    from utils.embeddings_handler import get_pairs_above_threshold, THRESHOLD_HIGH
-
     url_df = st.session_state.url_df
     sim_matrix = st.session_state.sim_matrix
     pairs_df = get_pairs_above_threshold(
@@ -191,9 +214,19 @@ elif pair_source == "Semantic Similarity Pairs" and has_semantic:
             "No high-similarity pairs found. Lower the threshold on the Semantic Similarity page.")
     else:
         pair_labels = [
-            f"{row['url_a'][:50]}... ↔ {row['url_b'][:50]}... [sim={row['similarity']:.0%}]"
+            f"{row['url_a'][:50]}... ↔ {row['url_b'][:50]}... "
+            f"[sim={row['similarity']:.0%}]"
             for _, row in pairs_df.iterrows()
         ]
+
+        if st.button(
+            f"⚡ Auto-select top {int(max_pairs_to_analyze)} pairs",
+            key="auto_select_sim",
+        ):
+            st.session_state.sim_pair_indices = list(
+                range(min(int(max_pairs_to_analyze), len(pair_labels)))
+            )
+
         selected_indices = st.multiselect(
             f"Choose up to {int(max_pairs_to_analyze)} pairs",
             options=range(len(pair_labels)),
@@ -212,12 +245,19 @@ elif pair_source == "Semantic Similarity Pairs" and has_semantic:
 elif pair_source == "GSC Cannibalization" and has_gsc:
     cannibal_findings = st.session_state.cannibalization_findings[:50]
     finding_labels = [
-        f"Query: '{
-            f['query']}' — {
-            f['num_competing_urls']} URLs — Impact: {
-            f['impact_score']:.1f}"
+        f"Query: '{f['query']}' — {f['num_competing_urls']} URLs "
+        f"— Impact: {f['impact_score']:.1f}"
         for f in cannibal_findings
     ]
+
+    if st.button(
+        f"⚡ Auto-select top {int(max_pairs_to_analyze)} queries",
+        key="auto_select_gsc",
+    ):
+        st.session_state.cannibal_indices = list(
+            range(min(int(max_pairs_to_analyze), len(finding_labels)))
+        )
+
     selected_finding_indices = st.multiselect(
         f"Choose up to {int(max_pairs_to_analyze)} queries to analyze",
         options=range(len(finding_labels)),
@@ -227,7 +267,6 @@ elif pair_source == "GSC Cannibalization" and has_gsc:
     )
     for idx in selected_finding_indices:
         f = cannibal_findings[idx]
-        # Convert to pairs (dominant vs first competing)
         if len(f["urls"]) >= 2:
             selected_pairs.append({
                 "url_a": f["urls"][0],
@@ -257,7 +296,7 @@ elif pair_source == "Manual Entry":
     if url_a and url_b:
         selected_pairs = [{"url_a": url_a.strip(), "url_b": url_b.strip()}]
 
-# ─── Additional context ─────────────────────────────────────────────────
+# ─── Additional context ──────────────────────────────────────────────────────
 
 if selected_pairs:
     additional_context = st.text_area(
@@ -268,30 +307,51 @@ if selected_pairs:
         key="ai_additional_context",
     )
 
-# ─── Run analysis ───────────────────────────────────────────────────────
+# ─── Run analysis (batch mode) ───────────────────────────────────────────────
 
 if selected_pairs and st.button(
         "🤖 Generate AI Recommendations", type="primary", key="run_ai"):
     st.divider()
     st.subheader("AI Analysis")
+
+    n_pairs = len(selected_pairs)
+    bs = int(batch_size)
+    n_batches = (n_pairs + bs - 1) // bs
+    ctx = additional_context if selected_pairs else ""
+
     st.caption(
-        f"Model: **{selected_label}**  |  Pairs: **{len(selected_pairs)}**")
+        f"Model: **{selected_label}**  |  Pairs: **{n_pairs}**  "
+        f"|  Batches: **{n_batches}**"
+    )
 
-    output_placeholder = st.empty()
-    full_output = ""
+    all_outputs: list[str] = []
 
-    with st.spinner("Generating recommendations..."):
-        for chunk in stream_recommendation(
-            model_id=model_id,
-            url_pairs=selected_pairs,
-            additional_context=additional_context if selected_pairs else "",
-        ):
-            full_output += chunk
-            output_placeholder.markdown(full_output + "▌")
+    for batch_num in range(n_batches):
+        batch = selected_pairs[batch_num * bs: (batch_num + 1) * bs]
+        batch_header = (
+            f"### Batch {batch_num + 1} of {n_batches} "
+            f"(Pairs {batch_num * bs + 1}–{batch_num * bs + len(batch)})"
+        )
+        st.markdown(batch_header)
 
-    output_placeholder.markdown(full_output)
+        placeholder = st.empty()
+        chunk_text = ""
 
-    # Copy button
+        with st.spinner(f"Analyzing batch {batch_num + 1}…"):
+            for chunk in stream_recommendation(
+                model_id=model_id,
+                url_pairs=batch,
+                additional_context=ctx,
+            ):
+                chunk_text += chunk
+                placeholder.markdown(chunk_text + "▌")
+
+        placeholder.markdown(chunk_text)
+        all_outputs.append(batch_header + "\n\n" + chunk_text)
+
+    # Combined download
+    full_output = "\n\n---\n\n".join(all_outputs)
+    st.divider()
     st.text_area(
         "Raw output (for copying)",
         value=full_output,
@@ -299,7 +359,7 @@ if selected_pairs and st.button(
         key="ai_raw_output",
     )
     st.download_button(
-        "⬇️ Download recommendation as Markdown",
+        "⬇️ Download recommendations as Markdown",
         data=full_output,
         file_name="ai_recommendations.md",
         mime="text/markdown",
@@ -308,7 +368,7 @@ if selected_pairs and st.button(
 elif not selected_pairs:
     st.info("Select URL pairs above to enable AI analysis.")
 
-# ─── Instructions ───────────────────────────────────────────────────────
+# ─── Instructions ────────────────────────────────────────────────────────────
 
 with st.expander("ℹ️ How to interpret AI recommendations"):
     st.markdown("""
@@ -327,4 +387,7 @@ with st.expander("ℹ️ How to interpret AI recommendations"):
     - 🟠 **High** — Address in next sprint
     - 🟡 **Medium** — Address in next content audit cycle
     - 🔵 **Low** — Monitor over time
+
+    **Batch processing:** Pairs are analyzed in groups (configurable batch size). Each batch
+    gets its own focused analysis, which produces cleaner output for large selections.
     """)

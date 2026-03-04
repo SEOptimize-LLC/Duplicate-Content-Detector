@@ -12,6 +12,7 @@ import requests
 import streamlit as st
 from datetime import datetime, date, timedelta
 from typing import Optional
+from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
 
 # Google OAuth endpoints
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -287,6 +288,31 @@ def fetch_sitemap_urls(site_url: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# URL normalization
+# ---------------------------------------------------------------------------
+
+_TRACKING_PARAMS = {
+    "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term",
+    "utm_id", "utm_name", "utm_reader", "utm_place", "utm_pubreferrer",
+    "gclid", "gclsrc", "dclid", "fbclid", "msclkid", "twclid", "ttclid",
+    "_ga", "_gac", "_gl", "mc_eid", "mc_cid", "igshid", "s_kwcid",
+    "ref", "referrer",
+}
+
+
+def normalize_url(url: str) -> str:
+    """Strip tracking/UTM parameters from a URL, preserving other query params."""
+    try:
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        clean = {k: v for k, v in params.items()
+                 if k.lower() not in _TRACKING_PARAMS}
+        return urlunparse(parsed._replace(query=urlencode(clean, doseq=True)))
+    except Exception:
+        return url
+
+
+# ---------------------------------------------------------------------------
 # Cannibalization analysis
 # ---------------------------------------------------------------------------
 
@@ -304,11 +330,28 @@ def detect_cannibalization(
     """
     from collections import defaultdict
 
-    # Group by query
-    query_map: dict[str, list[dict]] = defaultdict(list)
+    # Normalize URLs to strip tracking params, then re-aggregate by
+    # (query, normalized_page) so UTM variants count as the same URL.
+    aggregated: dict[tuple, dict] = {}
     for row in gsc_rows:
-        if row["impressions"] >= min_impressions and row["clicks"] >= min_clicks:
-            query_map[row["query"]].append(row)
+        if (row["impressions"] >= min_impressions
+                and row["clicks"] >= min_clicks):
+            norm_page = normalize_url(row["page"])
+            key = (row["query"], norm_page)
+            if key not in aggregated:
+                aggregated[key] = {
+                    "query": row["query"],
+                    "page": norm_page,
+                    "clicks": 0,
+                    "impressions": 0,
+                }
+            aggregated[key]["clicks"] += row["clicks"]
+            aggregated[key]["impressions"] += row["impressions"]
+
+    # Group normalized rows by query
+    query_map: dict[str, list[dict]] = defaultdict(list)
+    for row in aggregated.values():
+        query_map[row["query"]].append(row)
 
     findings = []
     for query, pages in query_map.items():
@@ -316,15 +359,16 @@ def detect_cannibalization(
             continue
 
         # Sort by clicks desc to find dominant URL
-        pages_sorted = sorted(pages, key=lambda x: x["clicks"], reverse=True)
+        pages_sorted = sorted(
+            pages, key=lambda x: x["clicks"], reverse=True)
         dominant = pages_sorted[0]
         competing = pages_sorted[1:]
 
         total_clicks = sum(p["clicks"] for p in pages)
         total_impressions = sum(p["impressions"] for p in pages)
 
-        # Impact score: more clicks + more impressions + more competing URLs =
-        # higher risk
+        # Impact score: more clicks + more impressions + more competing
+        # URLs = higher risk
         impact_score = round(
             (total_clicks + math.log1p(total_impressions)) * len(pages),
             2,
