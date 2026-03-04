@@ -311,6 +311,9 @@ if selected_pairs:
 
 if selected_pairs and st.button(
         "🤖 Generate AI Recommendations", type="primary", key="run_ai"):
+    # Clear previous output so stale results don't show while regenerating
+    st.session_state.pop("ai_output", None)
+
     st.divider()
     st.subheader("AI Analysis")
 
@@ -324,6 +327,7 @@ if selected_pairs and st.button(
         f"|  Batches: **{n_batches}**"
     )
 
+    progress_bar = st.progress(0.0, text="Starting analysis…")
     all_outputs: list[str] = []
 
     for batch_num in range(n_batches):
@@ -333,6 +337,11 @@ if selected_pairs and st.button(
             f"(Pairs {batch_num * bs + 1}–{batch_num * bs + len(batch)})"
         )
         st.markdown(batch_header)
+
+        progress_bar.progress(
+            batch_num / n_batches,
+            text=f"Analyzing batch {batch_num + 1} of {n_batches}…",
+        )
 
         placeholder = st.empty()
         chunk_text = ""
@@ -349,8 +358,21 @@ if selected_pairs and st.button(
         placeholder.markdown(chunk_text)
         all_outputs.append(batch_header + "\n\n" + chunk_text)
 
-    # Combined download
-    full_output = "\n\n---\n\n".join(all_outputs)
+        progress_bar.progress(
+            (batch_num + 1) / n_batches,
+            text=f"Batch {batch_num + 1} of {n_batches} complete.",
+        )
+
+    progress_bar.progress(1.0, text="Analysis complete ✓")
+    st.session_state.ai_output = "\n\n---\n\n".join(all_outputs)
+
+elif not selected_pairs:
+    st.info("Select URL pairs above to enable AI analysis.")
+
+# ─── Persistent output + download (survives download button reruns) ───────────
+
+if st.session_state.get("ai_output"):
+    full_output = st.session_state.ai_output
     st.divider()
     st.text_area(
         "Raw output (for copying)",
@@ -364,9 +386,6 @@ if selected_pairs and st.button(
         file_name="ai_recommendations.md",
         mime="text/markdown",
     )
-
-elif not selected_pairs:
-    st.info("Select URL pairs above to enable AI analysis.")
 
 # ─── Instructions ────────────────────────────────────────────────────────────
 
