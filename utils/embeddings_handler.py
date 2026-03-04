@@ -136,6 +136,7 @@ def parse_sf_embeddings(
         df_clean = df_clean.rename(columns={url_col: "url"})
         df_clean["url"] = df_clean["url"].str.strip()
         df_clean = df_clean[df_clean["url"].str.startswith("http")]
+        df_clean = df_clean.drop_duplicates(subset=["url"])
         if len(df_clean) >= 2:
             embeddings = df_clean[embedding_cols].values.astype(np.float32)
             embeddings = _normalize(embeddings)
@@ -151,6 +152,7 @@ def parse_sf_embeddings(
         # Only try rows where the URL is valid
         url_mask = df[url_col].astype(str).str.startswith("http")
         sub = df[url_mask][[url_col, col]].dropna()
+        sub = sub.drop_duplicates(subset=[url_col])
         matrix = _parse_packed_embeddings(sub[col])
         if matrix is not None and matrix.shape[0] >= 2:
             url_df = sub[[url_col]].rename(

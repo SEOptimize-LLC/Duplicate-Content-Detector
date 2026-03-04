@@ -188,6 +188,12 @@ def build_combined_df() -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
+
+    # Deduplicate by sorted pair key (guards against duplicate URLs in SF CSV)
+    df["_pair_key"] = df.apply(
+        lambda r: tuple(sorted([r["url_a"], r["url_b"]])), axis=1)
+    df = df.drop_duplicates(subset=["_pair_key"]).drop(columns=["_pair_key"])
+
     df = df.sort_values(
         "combined_score",
         ascending=False).reset_index(
